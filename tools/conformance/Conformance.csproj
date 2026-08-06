@@ -21,6 +21,13 @@
     <RootNamespace>ValeLoot.Conformance</RootNamespace>
     <AssemblyName>Conformance</AssemblyName>
     <!--
+      CI does not pin an SDK, so this has to run on whatever runtime the image happens to ship. It
+      targets net8.0 and rolls forward rather than refusing to start on a machine that has only a
+      newer one — a conformance check that cannot run is worth exactly as much as one that passes
+      for the wrong reason.
+    -->
+    <RollForward>Major</RollForward>
+    <!--
       CS1574: the linked files carry `<see cref="..."/>` to plugin types that are not compiled here.
       They are doc comments on the real files and must stay there; they mean nothing to this harness.
     -->

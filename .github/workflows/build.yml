@@ -22,12 +22,24 @@ on:
 permissions:
   contents: read
 
+# A push that supersedes another one should cancel it rather than queue behind it. During a GitHub
+# Actions outage — three of these failed in a row on 2026-08-06, all of them before a single step
+# ran — runs pile up waiting for a runner that is never coming, and the useful one is last in line.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     # ubuntu, deliberately: the plugin is Windows-only at RUNTIME (winmm, and a Windows game), but
     # it compiles anywhere, references no game assembly and resolves every il2cpp symbol by name at
     # runtime. A build that needs Windows would be a build that quietly grew a dependency on one.
     runs-on: ubuntu-latest
+
+    # The whole thing takes about 45 seconds. Fifteen minutes is not a budget, it is a tripwire: one
+    # failed run spent 15m2s being told "the job was not acquired by Runner of type hosted" before
+    # anything happened, and an unbounded job turns an outage into a hang.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -36,9 +48,16 @@ jobs:
         with:
           bun-version: latest
 
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '8.0.x'
+      # No `setup-dotnet`. Every action is resolved and downloaded before any step runs, and
+      # "Failed to resolve action download info" is what killed two of the three failed runs — so
+      # each action is failure surface bought with something. The runner image already ships a .NET
+      # SDK, the plugin targets net6.0 and the conformance harness net8.0, and both are built from
+      # reference packs that restore from NuGet, so buying that one back paid for nothing.
+      #
+      # Printed rather than pinned: if the image's SDK ever moves far enough to matter, this line is
+      # in the log of the run that broke.
+      - name: Which .NET
+        run: dotnet --version
 
       # Regenerate the editor page and fail if it differs from the committed one. This runs BEFORE
       # the plugin build so the DLL is compiled against a page we have just proven is current.
