@@ -145,6 +145,21 @@ main{flex:1;display:grid;grid-template-columns:400px 1fr;min-height:0}
 .tally b{color:var(--ink);font-weight:600}
 .tally .lit b{color:var(--gold)}
 .tally s{text-decoration:none;color:var(--line2)}
+/**
+ * The find box, above the grid.
+ *
+ * Its own row rather than squeezed into `.stagehead`, because that row is a heading plus a tally
+ * that already competes for the width, and a search field that shrinks to nothing on a narrow
+ * window is a search field nobody uses.
+ */
+.bagfind{flex:none;display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line)}
+.bagfind input{flex:1;min-width:0;background:var(--sunk);color:var(--ink);border:1px solid var(--line2);
+  border-radius:5px;padding:5px 9px;font:inherit;font-size:12px}
+.bagfind input:focus{outline:none;border-color:var(--gold)}
+.bagfind input::placeholder{color:var(--faint)}
+.bagfind #bagfindcount{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Both hidden until there is something to clear, so the row is quiet when unused. */
+.bagfind.idle #bagfindclear,.bagfind.idle #bagfindcount{visibility:hidden}
 .gridwrap{flex:1;min-height:0;overflow:auto;padding:16px;
   background:
     radial-gradient(120% 80% at 50% -10%,rgba(200,169,97,.05),transparent 60%),
@@ -219,6 +234,12 @@ main{flex:1;display:grid;grid-template-columns:400px 1fr;min-height:0}
 .cell .nm{position:relative;font-size:11px;line-height:1.2;color:var(--ink);
   text-shadow:0 1px 3px #000,0 0 6px #000;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .cell.lit .nm{font-weight:600}
+/* The id a search matched when the NAME did not. Monospace and dim: it is the game's own spelling,
+   not the player's, and it must never be mistaken for the item's name. The cell is a fixed square,
+   so the name gives up its second line to make room — a clipped explanation is worse than none. */
+.cell.matched .nm{-webkit-line-clamp:1}
+.cell .why{position:relative;flex:none;margin-top:1px;font:9px var(--mono);color:var(--faint);
+  text-shadow:0 1px 2px #000;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .cell .foot{position:relative;display:flex;align-items:center;gap:5px;margin-top:2px;
   font:9.5px var(--mono);text-shadow:0 1px 2px #000}
 .cell .foot .rf{color:var(--gold)}
@@ -467,7 +488,7 @@ footer .path{margin-left:auto;font:11px var(--mono);color:var(--faint);overflow:
   <span class="brand">ValeLoot <em>filter</em></span>
   <div class="files" id="filestate"></div>
   <span class="grow"></span>
-  <button class="btn tiny" id="reload" title="re-read all three files from the folder">re-read</button>
+  <button class="btn tiny" id="reload" title="refresh all three files from the folder">refresh</button>
   <button class="btn tiny" id="download" title="save a copy of the filter text to your downloads">download</button>
   <button class="btn save" id="save">Save to the game</button>
 </header>
@@ -501,6 +522,11 @@ footer .path{margin-left:auto;font:11px var(--mono);color:var(--faint);overflow:
     <div class="stagehead">
       <h2>your bag, as the filter paints it</h2>
       <div class="tally" id="tally"></div>
+    </div>
+    <div class="bagfind">
+      <input id="bagfind" type="search" placeholder="find in bag — name, type or id" autocomplete="off" spellcheck="false">
+      <button class="btn tiny" id="bagfindclear" title="clear">clear</button>
+      <span id="bagfindcount"></span>
     </div>
     <div class="gridwrap"><div class="grid" id="grid"></div></div>
     <div id="act"></div>
@@ -1122,6 +1148,8 @@ let focusRule = null;          // where the keyboard should land after a reorder
 let fileState = { filter: null, items: null, bag: null };
 
 const src = $('src');
+/** What is typed in the bag's find box. Presentation only — never saved, never part of a rule. */
+let bagFind = '';
 
 // ─────────────────────────── the filter text ──────────────────────────
 const STARTER = [
@@ -1333,7 +1361,7 @@ function parseBag(text) {
  * Reader two: the `bag` half of `/api/state` — what a page the mod served gets.
  *
  * `generated` is the mod's own projection time and is preferred, because it answers the question the
- * re-read control is actually asked: was this bag taken AFTER I looted? The page's read time is the
+ * refresh control is actually asked: was this bag taken AFTER I looted? The page's read time is the
  * fallback for a payload that does not carry one — never a substitute for one that does.
  */
 function bagFromState(state) {
@@ -1561,11 +1589,53 @@ function renderGrid() {
     return;
   }
   if (!bag.items.length) {
-    host.innerHTML = '<p class="empty" style="grid-column:1/-1">The snapshot is empty — open your bag in game, then press re-read.</p>';
+    host.innerHTML = '<p class="empty" style="grid-column:1/-1">The snapshot is empty — open your bag in game, then press refresh.</p>';
     return;
   }
-  let html = '';
+  /**
+   * The find box narrows what is DRAWN, and nothing else.
+   *
+   * It is not a rule, it is not saved, and it deliberately does not touch the tally: those counts
+   * describe what your filter does to your whole bag, and quietly recomputing them against a search
+   * term would answer a question nobody asked. Someone with seven hundred items wants to find one of
+   * them and then carry on.
+   *
+   * Matched against the same three things a `Name` or `Type` line matches — the displayed name, the
+   * catalog id and the type — so what you type here and what you then write in a rule agree.
+   *
+   * ## Why a match SAYS why
+   *
+   * Searching "aby" returns Abyssal Idol, and also Sharkling Card, Squidling Card and Plum Squid
+   * Card, whose names contain no such thing. Their ids are `Shark Baby`, `Squid Baby` and
+   * `Octopus Baby Purple` — the game's internal name for a small monster — so the match is real and
+   * the REASON is invisible, which reads exactly like a broken search. Reported as one.
+   *
+   * Dropping id matching would be the wrong fix: an id is what `valeloot-items.txt` prints, what a
+   * shared filter carries, and what a `Name` rule matches, so a search that ignored it would
+   * disagree with the rule the player is about to write. So the id is SHOWN instead, on the cells
+   * where it is the reason. A surprising result that explains itself is a feature; the same result
+   * in silence is a bug report.
+   */
+  const needle = bagFind.trim().toLowerCase();
+  const has = (value) => (value || '').toLowerCase().includes(needle);
+  const shown = [];
   for (const item of bag.items) {
+    if (!needle) { shown.push({ item, why: null }); continue; }
+    if (has(item.name)) shown.push({ item, why: null });
+    else if (has(item.itemId)) shown.push({ item, why: item.itemId });
+    else if (has(item.slotType)) shown.push({ item, why: item.slotType });
+  }
+
+  renderFindCount(shown.length, bag.items.length, needle);
+
+  if (!shown.length) {
+    host.innerHTML = '<p class="empty" style="grid-column:1/-1">Nothing in your bag matches <b>'
+      + esc(bagFind.trim()) + '</b>.</p>';
+    return;
+  }
+
+  let html = '';
+  for (const { item, why } of shown) {
     const mark = plan ? plan.marks.get(item.uid) : null;
     // A pinned item is LIT — glow, #facc15, tagged PINNED — because that is what AlwaysShow draws
     // in game. Treating only rule matches as lit left the loudest cell in the bag looking claimed
@@ -1574,6 +1644,7 @@ function renderGrid() {
     const cls = ['cell'];
     if (lit) { cls.push('lit', levelClass(mark.level)); } else { cls.push('dim'); }
     if (item.uid === selectedUid) cls.push('sel');
+    if (why) cls.push('matched');
     const color = lit ? mark.color : '#000000';
     // `by` is the block index that claimed it — including a Hide, whose claim is invisible in the bag
     // and therefore the one most worth being able to point at.
@@ -1585,6 +1656,8 @@ function renderGrid() {
       + (item.favorite ? '<span class="fav" title="favourited in game"></span>' : '')
       + '<span class="ty">' + esc(item.slotType || '\u00b7') + '</span>'
       + '<span class="nm">' + esc(item.name) + '</span>'
+      // Only when the name did NOT match: otherwise every cell would carry a redundant second line.
+      + (why ? '<span class="why" title="matched on this, not on the name">' + esc(why) + '</span>' : '')
       + (item.refine || item.topRolls
         ? '<span class="foot">' + (item.refine ? '<span class="rf">+' + item.refine + '</span>' : '')
           + (item.topRolls ? '<span class="tp">\u2605' + item.topRolls + '</span>' : '') + '</span>'
@@ -1592,6 +1665,14 @@ function renderGrid() {
       + '</div>';
   }
   host.innerHTML = html;
+}
+
+/** The "12 of 421" readout, and the row's quiet state when nothing is typed. */
+function renderFindCount(shown, total, needle) {
+  const row = document.querySelector('.bagfind');
+  if (row) row.classList.toggle('idle', !needle);
+  const out = $('bagfindcount');
+  if (out) out.textContent = needle ? shown + ' of ' + total : '';
 }
 
 function renderTally() {
@@ -2317,7 +2398,7 @@ async function saveToFolder() {
     downloadText();
     say(hasFS
       ? 'No folder is granted, so the file was downloaded instead. Move it into BepInEx/config/ '
-        + 'yourself, or grant the folder with re-read and save again.'
+        + 'yourself, or grant the folder with refresh and save again.'
       : 'This browser cannot write into your game folder, so the file was downloaded instead — move it '
         + 'into BepInEx/config/ yourself. Chrome or Edge can do it in one click.');
     return;
@@ -2427,7 +2508,7 @@ function renderConnection() {
   if (served.lost) {
     box.className = 'conn lost';
     box.innerHTML = '<i></i>the mod stopped answering on <b>' + esc(where)
-      + '</b> — press re-read to reconnect';
+      + '</b> — press refresh to reconnect';
     return;
   }
   box.className = 'conn on';
@@ -2439,7 +2520,7 @@ function renderConnection() {
 /**
  * One payload in, all three things out.
  *
- * `keepText` is the re-read case: a player who has just looted wants a fresh bag, not their unsaved
+ * `keepText` is the refresh case: a player who has just looted wants a fresh bag, not their unsaved
  * rules thrown away and replaced by what is on disk. Silently overwriting the textarea from a
  * background read would be the worst kind of data loss this page could manage, so the first read
  * takes the mod's text and every later one leaves the editor alone.
@@ -2459,7 +2540,7 @@ function applyState(state, keepText) {
   // in the folder and the five synthesised built-ins are the honest best guess.
   served.sounds = Array.isArray(state.sounds) && state.sounds.length ? state.sounds.slice() : null;
   // Only ever from a real string, and adopted when the buffer is not yet the player's: `keepText` is
-  // the re-read case, but a HELD save means no read has ever supplied the rules, so this one may.
+  // the refresh case, but a HELD save means no read has ever supplied the rules, so this one may.
   let released = false;
   if (!keepText || saveHeld) {
     if (typeof state.filter === 'string') {
@@ -2475,6 +2556,62 @@ function applyState(state, keepText) {
   return released;
 }
 
+/**
+ * Keep the bag current on its own, while the mod is serving.
+ *
+ * The mod knows within about a second that you dismantled something —
+ * `InventoryWatch` walks the real inventory and `BagSnapshot.Retain` drops what is gone. This page
+ * did not, because it only ever asked when you pressed refresh, so the first thing a player noticed
+ * about the fix was that they still had to press a button to see it.
+ *
+ * Deliberately narrow, because a page that re-renders under your hands is worse than a stale count:
+ *
+ * - Only when the mod is actually serving, and not while it is lost.
+ * - Never while the tab is hidden. A background tab polling a game's process is rude and pointless.
+ * - Never while Save is HELD, because that is the one case where `applyState` adopts the mod's text
+ *   and would overwrite rules typed into the placeholder.
+ * - Never while the focus is inside the editor. Re-rendering the cascade under a caret loses it, and
+ *   someone typing a rule is not someone waiting for a bag count.
+ * - Only when something CHANGED, keyed on the timestamp the mod stamps a republished bag with, so a
+ *   quiet minute costs one small request every few seconds and zero DOM work.
+ *
+ * Silent by design: no footer message. A number that quietly becomes right needs no announcement,
+ * and refresh still exists for anyone who wants to force it and be told what happened.
+ */
+const BAG_POLL_MS = 3000;
+let lastGenerated = null;
+let polling = false;
+
+async function pollBag() {
+  if (polling) return;
+  if (mode !== 'served' || served.lost || saveHeld) return;
+  if (document.hidden) return;
+
+  const focused = document.activeElement;
+  if (focused && focused !== document.body && $('cascade').contains(focused)) return;
+  if (focused === $('src')) return;
+
+  polling = true;
+  try {
+    const state = await fetchState();
+    const stamp = state && typeof state.generated === 'string' ? state.generated : null;
+    // First poll of a session adopts the stamp without rendering: the page has just read this exact
+    // payload through its normal path, and re-applying it would be a free re-render for nothing.
+    if (lastGenerated === null) { lastGenerated = stamp; return; }
+    if (stamp === lastGenerated) return;
+    lastGenerated = stamp;
+    applyState(state, true);
+  } catch (error) {
+    // A poll that fails says nothing. The mod exiting is reported by the paths that matter — a save
+    // or an explicit refresh — and a toast every three seconds because the game is shutting down is
+    // the worst possible time to be noisy.
+  } finally {
+    polling = false;
+  }
+}
+
+setInterval(pollBag, BAG_POLL_MS);
+
 /** What to say after a read landed — including the two things the payload can be honestly short of. */
 function reportState(first, released) {
   if (released) {
@@ -2485,12 +2622,12 @@ function reportState(first, released) {
   }
   if (!served.catalogReady) {
     say('Read your rules and bag. The game\u2019s item catalog is still loading, so name and type '
-      + 'autocomplete is empty for now — press re-read in a moment and it will fill in.');
+      + 'autocomplete is empty for now — press refresh in a moment and it will fill in.');
     return;
   }
   if (!bag.items.length) {
     say('Read your rules. Your bag is empty so far — ValeLoot learns an item the first time it draws '
-      + 'it, so open your bag in game, scroll it, then press re-read.');
+      + 'it, so open your bag in game, scroll it, then press refresh.');
     return;
   }
   say((first ? 'Read straight from the game: ' : 'Fresh from the game: ')
@@ -2503,7 +2640,7 @@ function reportState(first, released) {
  *
  * Not a dialog and not a silent failure: the editor keeps everything the player has typed, the mode
  * drops to the file mode's honest capabilities — download, not save — and the footer says which
- * address stopped answering. Re-read re-probes, so a mod that is merely mid-restart costs one click.
+ * address stopped answering. Refresh re-probes, so a mod that is merely mid-restart costs one click.
  */
 function loseConnection(reason) {
   mode = 'file';
@@ -2512,7 +2649,7 @@ function loseConnection(reason) {
   applyModeChrome();
   say('ValeLoot is no longer answering' + (reason ? ' (' + reason + ')' : '')
     + '. Nothing was written. Your rules are still here — use download to keep a copy, or press '
-    + 're-read once the game is back and this page reconnects.', true);
+    + 'refresh once the game is back and this page reconnects.', true);
 }
 
 /**
@@ -2531,7 +2668,7 @@ function failedRead(error) {
     holdSave(reason);
     say('ValeLoot is running but could not read your rules: ' + reason + ' \u2014 nothing on screen has '
       + 'been replaced, and Save is held until it can read them, so an unreadable file cannot be '
-      + 'overwritten by a blank one. Press re-read to try again.', true);
+      + 'overwritten by a blank one. Press refresh to try again.', true);
     return;
   }
   loseConnection(reason);
@@ -2576,12 +2713,12 @@ async function saveToMod() {
 
 /** The header's Save, routed by mode — and never labelled as more than the mode can do. */
 function saveFilter() {
-  if (saveHeld) { say('Save is held: ' + saveHeld + '. Press re-read first.', true); return undefined; }
+  if (saveHeld) { say('Save is held: ' + saveHeld + '. Press refresh first.', true); return undefined; }
   return mode === 'served' ? saveToMod() : saveToFolder();
 }
 
 /**
- * Re-read, routed by mode. Deliberately quiet: it is the control for "I just looted", which happens
+ * Refresh, routed by mode. Deliberately quiet: it is the control for "I just looted", which happens
  * far more often than anything else on this page, and it must not cost a reload or a re-grant.
  */
 async function reread() {
@@ -2622,7 +2759,7 @@ function applyModeChrome() {
         : 'this browser cannot write into the game folder';
   $('reload').title = servedNow
     ? 'pull a fresh bag and rules from the game — do this after looting'
-    : 're-read all three files from the folder';
+    : 'refresh all three files from the folder';
 }
 
 async function enterServed(again) {
@@ -2946,6 +3083,27 @@ src.addEventListener('keydown', (event) => {
 $('save').addEventListener('click', saveFilter);
 $('download').addEventListener('click', downloadText);
 $('reload').addEventListener('click', reread);
+
+/**
+ * The find box. `renderGrid` alone, not the whole `refresh()` — the rules have not changed, so
+ * reparsing them on every keystroke would be work nobody asked for on the one control that has to
+ * stay responsive with several hundred cells on screen.
+ */
+$('bagfind').addEventListener('input', (e) => { bagFind = e.target.value; renderGrid(); });
+$('bagfind').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  // Escape clears rather than closing anything, because there is nothing here to close and a search
+  // box that swallows Escape without doing something is a dead key.
+  bagFind = '';
+  $('bagfind').value = '';
+  renderGrid();
+});
+$('bagfindclear').addEventListener('click', () => {
+  bagFind = '';
+  $('bagfind').value = '';
+  $('bagfind').focus();
+  renderGrid();
+});
 $('tidy').addEventListener('click', () => {
   // Reprints the COMPILED rules, so it drops comments — offered as a button you press, never as
   // something that happens to your file while you are typing in it.

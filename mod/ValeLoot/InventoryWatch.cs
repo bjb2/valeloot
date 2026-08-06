@@ -214,6 +214,9 @@ internal static class InventoryWatch
      */
     private static string _characterUid = "";
     private static bool _primed;
+    /// <summary>Which bags existed at the last check. A change re-primes, so a dictionary the game
+    /// allocates later arrives as baseline rather than as a bagful of pickups.</summary>
+    private static int _present;
     private static long _lastTotal = -1;
     private static int _frames;
     private static bool _countWarned;
@@ -287,6 +290,7 @@ internal static class InventoryWatch
     {
         Installed = false;
         Forget();
+        _present = 0;
         _countFields.Clear();
         for (int i = 0; i < _bags.Length; i++) _bags[i].Stack = -1;
         _log = _ => { };
@@ -335,19 +339,40 @@ internal static class InventoryWatch
         }
 
         /**
-         * "First SUCCESSFUL observation": priming against a half-built inventory would call the real
-         * contents an arrival the moment the remaining dictionaries appeared. So every dictionary
-         * this build resolved has to be there, not just the first one.
+         * A dictionary that is THERE but null is an EMPTY BAG, not a broken read.
+         *
+         * This cost the whole feature once. The rule used to be "every dictionary this build resolved
+         * has to be present, or the inventory is half-built and priming against it would call the
+         * real contents an arrival" — which is sound reasoning about `Equips` and wrong about the
+         * rest: a character who owns no cosmetics has a null `Cosmetics`, permanently, and the guard
+         * turned that into `Forget(); return;` on every tick for ever. Symptom, and the one to
+         * recognise again: the bag paints normally, `bagRows` climbs, and `primed` is stuck false
+         * with `held` at 0 while `checks` runs into the tens of thousands.
+         *
+         * So only the REQUIRED bag being null means "no inventory yet". Everything else contributes
+         * nothing and is skipped.
+         *
+         * The original concern is kept by a different mechanism: `present` is a bitmask of which bags
+         * exist this tick, and any change to it re-primes silently. A dictionary the game allocates
+         * later — the first cosmetic you ever own — therefore lands as baseline rather than as a
+         * bagful of arrivals, which is what the old guard was really protecting.
          */
         long total = 0;
+        int present = 0;
         bool sizesKnown = true;
         for (int i = 0; i < _bags.Length; i++)
         {
-            if (_bags[i].Offset < 0) { _live[i] = IntPtr.Zero; continue; }
+            _live[i] = IntPtr.Zero;
+            if (_bags[i].Offset < 0) continue;
 
             IntPtr dictionary = Marshal.ReadIntPtr(inventory, _bags[i].Offset);
-            if (dictionary == IntPtr.Zero) { Forget(); return; }
+            if (dictionary == IntPtr.Zero)
+            {
+                if (_bags[i].Required) { Forget(); return; }
+                continue;
+            }
             _live[i] = dictionary;
+            present |= 1 << i;
 
             if (!sizesKnown) continue;
             int size = LiveCount(dictionary);
@@ -356,6 +381,12 @@ internal static class InventoryWatch
             // removed, the stack sum moves when a card you already own arrives again. Summing them
             // into one number loses nothing — this is a change detector, not a quantity.
             total += size + Il2CppMeta.SumValueInt32(dictionary, _bags[i].Stack);
+        }
+
+        if (present != _present)
+        {
+            _present = present;
+            Forget();
         }
 
         if (!sizesKnown)
@@ -413,6 +444,18 @@ internal static class InventoryWatch
         // left is forgotten and looting it again is an arrival again. The old map is next walk's
         // scratch, cleared at the top — bounded by the bag, never by the session.
         (_baseline, _scratch) = (_scratch, _baseline);
+
+        /**
+         * The bag file's membership, corrected against what is actually owned.
+         *
+         * `_baseline` is now exactly the bag, so this is the moment — and the only moment — anything
+         * in this mod knows that an item is GONE. A repaint cannot tell a sold item from a page you
+         * have not scrolled to, which is why the snapshot accumulated for ever and a player ended up
+         * looking at seven hundred items he had banked.
+         *
+         * After the swap on purpose, so the set handed over is this walk's, not the last one's.
+         */
+        BagSnapshot.Retain(_baseline);
 
         if (!_primed)
         {

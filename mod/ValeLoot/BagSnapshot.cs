@@ -25,18 +25,22 @@ namespace ValeLoot;
 ///
 /// ## What the file contains, and why it says so out loud
 ///
-/// EVERYTHING SEEN THIS SESSION, accumulated by uid across repaints — not the current page.
+/// WHAT YOU OWN, keyed by uid — not the current page, and not a session high-water mark.
 ///
-/// The game binds one page of cells at a time, so a snapshot built from a single pass describes about
-/// a dozen items of a two-hundred-item bag. An editor showing "3 items match" from that file would be
-/// wrong by an order of magnitude while looking authoritative, which is worse than showing nothing.
-/// Uids are stable, so accumulating across passes converges on the whole bag as the player scrolls,
-/// and the header says in one sentence what the file is and where it is still short — including that
-/// an item sold since it was seen may still be listed, because a repaint cannot report a removal.
+/// Two sources, because neither is sufficient alone. The paint pass supplies CONTENT: the game binds
+/// one page of cells at a time, so a snapshot built from a single pass describes about a dozen items
+/// of a two-hundred-item bag, and uids are stable, so accumulating across passes converges on the
+/// whole bag as the player scrolls.
 ///
-/// A file left over from an earlier session is deleted at boot rather than kept: it would claim "this
-/// session" about a bag that has since been played for three hours, and nothing in it lets the editor
-/// notice. It comes back the first time the bag is drawn.
+/// <see cref="InventoryWatch"/> supplies MEMBERSHIP, through <see cref="Retain"/>. That is the half a
+/// repaint cannot do at all: a uid missing from a pass means "sold" and "on a page you have not
+/// looked at" equally, so for a long time this file could only accumulate and say so in its header.
+/// It was not enough — a player watched it reach seven hundred items, most of them in his bank, and
+/// reported that it never resets. The watcher reads the inventory DATA, so it knows what is gone.
+///
+/// A file left over from an earlier session is deleted at boot rather than kept: it would claim to be
+/// a bag that has since been played for three hours, and nothing in it lets the editor notice. It
+/// comes back the first time the bag is drawn.
 ///
 /// ## Cost, because this hangs off the repaint path
 ///
@@ -137,6 +141,8 @@ internal static class BagSnapshot
 
     private static bool _saidTruncated;
     private static bool _truncated;
+    /// <summary>Whether any cell has ever been captured. Separates "nothing seen yet" from "nothing left".</summary>
+    private static bool _everObserved;
 
     /// <summary>Signature of the content last handed to <see cref="EditorServer"/>. Main thread only.</summary>
     private static long _publishedSignature = long.MinValue;
@@ -168,6 +174,7 @@ internal static class BagSnapshot
         _installed = false;
         _rows.Clear();
         _rowSum = 0;
+        _everObserved = false;
         _reportedCount = -1;
         _publishedSignature = long.MinValue;
     }
@@ -219,7 +226,62 @@ internal static class BagSnapshot
             _rowSum = unchecked(_rowSum + hash);
         }
 
+        _everObserved = true;
         _rows[uid] = Capture(uid, hash, facts);
+    }
+
+    /**
+     * Keep only the uids the player still owns, and forget the rest.
+     *
+     * This is the half a repaint cannot do. The paint pass only ever sees cells the game has bound,
+     * so a uid missing from a pass means "sold" and "on a page you have not scrolled to" equally,
+     * and the snapshot had no choice but to accumulate and never remove. The file said so in its own
+     * header, and a player still ended up staring at seven hundred items, most of them in his bank:
+     * "it never resets".
+     *
+     * <see cref="InventoryWatch"/> is the missing authority. It reads the player's inventory DATA —
+     * every bag, every key, no cell involved — so its baseline is exactly what is owned, and it is
+     * handed here at the end of the walk that produced it.
+     *
+     * The two key spaces are the same one, which is what makes this safe: equipment is keyed by its
+     * item UID in both, and a stackable is keyed by its item ID in both (`StackableItemData` has no
+     * UID at all). Verified against a live bag — a card row reads
+     * `Abomination \t Abomination \t Abomination Card \t Card`, uid and id identical, which is the
+     * `InventoryData.Cards` key.
+     *
+     * Called on a walk, which only happens when the bag actually changed, so the common frame pays
+     * nothing for this.
+     */
+    public static void Retain(IReadOnlyDictionary<string, int> held)
+    {
+        if (!_installed || _rows.Count == 0) return;
+
+        // Collected first rather than removed in place: mutating a dictionary while enumerating it
+        // throws, and the allocation only happens on a walk that actually lost something.
+        List<string>? gone = null;
+        foreach (KeyValuePair<string, Row> entry in _rows)
+        {
+            if (held.ContainsKey(entry.Key)) continue;
+            (gone ??= new List<string>()).Add(entry.Key);
+        }
+        if (gone is null) return;
+
+        foreach (string uid in gone)
+        {
+            if (!_rows.TryGetValue(uid, out Row? row)) continue;
+            _rowSum = unchecked(_rowSum - row.Hash);
+            _rows.Remove(uid);
+        }
+
+        // The ceiling caveat has to be able to become untrue again: a bag that dropped back under
+        // the limit is no longer a truncated snapshot, and the header should stop claiming it is.
+        if (_truncated && _rows.Count < MaxRows) _truncated = false;
+
+        // Publish and write from HERE, because a dismantle with the panel shut produces no paint
+        // pass at all — and "the number does not go down until you open your bag" is the same bug
+        // wearing a smaller hat.
+        EndPass();
+        PublishToEditor();
     }
 
     /// <summary>
@@ -231,7 +293,11 @@ internal static class BagSnapshot
     /// </summary>
     public static void EndPass()
     {
-        if (!_installed || _rows.Count == 0) return;
+        // `_everObserved`, not `_rows.Count`: a bag reaped down to nothing is a real state that has
+        // to reach the file, or "I dropped everything" reads as "the mod stopped updating". What the
+        // guard is really for is the window before the first pass, when a count of zero means
+        // "nothing seen yet" and writing it would replace "not loaded" with a confident "0 items".
+        if (!_installed || !_everObserved) return;
 
         long signature = Signature();
         if (signature == Interlocked.Read(ref _writtenSignature)) return;
@@ -269,7 +335,7 @@ internal static class BagSnapshot
      */
     public static void PublishToEditor()
     {
-        if (!_installed || _rows.Count == 0) return;
+        if (!_installed || !_everObserved) return;
 
         long signature = Signature();
         if (signature == _publishedSignature) return;
@@ -406,8 +472,8 @@ internal static class BagSnapshot
 
         var text = new StringBuilder(rows.Length * 96 + 512);
         text.Append("# GENERATED by ValeLoot \u2014 your bag as the filter sees it. Editing this does nothing.\n")
-            .Append("# This is every item ValeLoot has seen in your bag this session, keyed by uid \u2014 scroll\n")
-            .Append("# or switch tabs to add more. Items you have since sold or used may still be listed.\n")
+            .Append("# Keyed by uid. Items you sell, bank or dismantle drop out within a second; scroll\n")
+            .Append("# or switch tabs to fill in items not seen yet this session.\n")
             .Append("# version ").Append(FormatVersion.ToString(CultureInfo.InvariantCulture)).Append('\n')
             .Append("# threshold ").Append(threshold.ToString(CultureInfo.InvariantCulture)).Append('\n');
         if (truncated)

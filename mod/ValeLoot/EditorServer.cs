@@ -1014,11 +1014,11 @@ internal static class EditorServer
     public static void PublishBag(BagItem[] bag, int threshold, bool truncated)
     {
         string coverage = truncated
-            ? "every item ValeLoot has seen in your bag this session, keyed by uid — and it stopped "
-            + "counting at its cap, so this is SHORT of your bag."
-            : "every item ValeLoot has seen in your bag this session, keyed by uid. The game binds one "
-            + "page of cells at a time, so scroll or switch tabs to fill it in; an item sold since it "
-            + "was seen may still be listed.";
+            ? "your bag as the filter sees it — and it stopped counting at its cap, so this is SHORT "
+            + "of your bag."
+            : "your bag as the filter sees it. Items you sell, bank or dismantle drop out of this "
+            + "within a second, whether the panel is open or not. The game binds one page of cells "
+            + "at a time, so scroll or switch tabs to fill in items not seen yet this session.";
 
         _snapshot = _snapshot.WithBag(
             bag, threshold, coverage,
