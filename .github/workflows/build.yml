@@ -30,13 +30,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
@@ -68,7 +68,7 @@ jobs:
       - name: Package the plugin zip
         run: dotnet build mod/ValeLoot/ValeLoot.csproj -c Release -t:Package
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: valeloot-plugin-zip
           path: mod/ValeLoot/dist/*.zip
