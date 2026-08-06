@@ -1,1 +1,226 @@
-See the release notes; README in progress.
+# ValeLoot
+
+**A loot filter for SpiritVale, inside the game.** You write rules in a text file; ValeLoot colours your
+inventory cells by those rules, tells you which rule claimed an item when you hover it, and plays a sound
+when a matching item is picked up.
+
+It is complete on its own. No companion app, no server, no account, nothing to sign up for.
+
+![The ValeLoot editor: a real bag on the right, tinted by the rules on the left](docs/editor.webp)
+
+*The editor, showing a real 351-item bag. Each cell carries the colour of the rule that claimed it, at the
+intensity that rule asked for. Point at a rule and the bag dims to show you exactly which items it took.*
+
+---
+
+## Read this first
+
+**It does not automate anything.** ValeLoot changes how loot *looks and sounds* to you. It does not pick
+anything up, sell, salvage, refine, move, equip or click anything, and it never plays the game for you.
+Every decision in the game remains yours, made by hand, at the same speed as before. What it does is put
+the information you already have where you can see it: a colour on a cell, a line on a tooltip, a noise
+when something good lands.
+
+Concretely, it draws overlays and plays audio cues. That is the entire feature set.
+
+**It is provided as is.** No warranty, no guarantee that it works, no promise of support or updates, and no
+assurance it will survive the next game patch. Nobody has endorsed it. If you install it, you accept that
+you are responsible for your own account and your own machine. That is not boilerplate — see *The
+developer's stance* below.
+
+## What it does
+
+- **Colours your inventory cells** by your own rules, at three intensities: `dot` (barely lit), `mark`
+  (clearly lit), `glow` (unmistakable, and it animates). The colour is whatever `#rrggbb` you wrote.
+- **Names the rule on hover.** The item tooltip gains one line, in that rule's colour, saying which of
+  your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
+- **Plays a sound when a matching item is picked up** — bag open or closed, once per item. Equipment and
+  artifacts today; see *Known limitations*.
+- **Reloads while you play.** Save your rules and the bag recolours on the next inventory redraw. No
+  restart, no relog.
+- **Comes with an editor.** Press `F8` in game and your browser opens on it, already showing your real bag.
+
+## What it does NOT do
+
+- No automation of any kind. It does not pick up, sell, refine, salvage, move or equip anything.
+- No input simulation. It does not click, type, aim or move for you.
+- No game commands. It sends the game nothing at all.
+- No packet capture. It does not hook, read or touch the game's network traffic, and there is no code path
+  by which it could.
+- Nothing leaves your machine. No telemetry, no uploads, no account, no phoning home.
+
+That is a **scope boundary with a reason**, not a list of unfinished features. The game's staff have said
+client-side tools that change how loot looks are allowed and nothing beyond that is — so the rule language
+has no verb that acts on an item, and the plugin carries no code that could carry one out if it did. The
+absence is the design.
+
+You can verify most of this in a minute, and you should: clone the repo and grep for `Socket`, `HttpClient`
+and `System.Net`. The only thing you will find is the editor's loopback server, described below.
+
+## The developer's stance, quoted exactly
+
+Game staff, replying publicly about a loot-presentation tool:
+
+> "…a tool that basically modify how the loot color is, sound and how it looks in the inventory. This is
+> allowed but as I said we are not responsible for the applications players install and use. It's at your
+> own risk and you are responsible of your own account"
+
+**Allowed is not endorsed.** Nobody has approved this mod, nobody is going to, and if something goes wrong
+with your account that is on you. The same warning prints in the log every time the game starts with
+ValeLoot installed, because you should be reminded rather than told once.
+
+---
+
+## Install
+
+Take **`ValeLoot-x.y.z-with-BepInEx.zip`** from the releases page.
+
+1. Unzip it into your SpiritVale folder — the one holding `SpiritVale.exe`.
+2. Launch the game.
+3. Press `F8`.
+
+That is the whole install. BepInEx is included, unmodified, because picking the wrong BepInEx build is the
+commonest way to fail at installing a mod like this: BepInEx 5 and the *stable* 6 release do not load
+plugins into an IL2CPP game, and the download page does not make that obvious. Bundling removes the choice.
+
+Already running BepInEx 6 IL2CPP? Take the plain `ValeLoot-x.y.z.zip` instead — it is the plugin alone, and
+it will not touch your existing install.
+
+To uninstall, delete `BepInEx/plugins/ValeLoot/`. Your rules and sounds stay in `BepInEx/config/` in case
+you come back.
+
+## Writing rules
+
+Rules live in `BepInEx/config/valeloot-filter.txt`, and a worked example ships in it. The language is a
+deliberate lift from the loot filters players already know from Path of Exile and Diablo: an **ordered list
+where the first match wins**, so specific rules go at the top and broad ones at the bottom, and you never
+have to think about overlap — only about priority.
+
+```
+Threshold 90
+
+Show "Two top rolls"
+    TopRolls  >= 2
+    Color     #e9c46a
+    Tag       TOP2
+    Highlight glow
+    Sound     chime
+
+Show "Weapons worth keeping"
+    Type      Dagger, Katar, Twinblade
+    Stat      Agi >= 3
+    Color     #c4a5ff
+    Highlight glow
+
+Hide "vendor trash"
+    AvgRoll   < 35
+    TopRolls  < 1
+```
+
+| Condition | Asks |
+|---|---|
+| `Name Kunai` | part of the item's name, or its id |
+| `Type Dagger, Katar` | the item's type; comma-separated means any of them |
+| `TopRolls >= 2` | how many lines rolled at or above `Threshold` |
+| `AvgRoll < 35` | average roll quality across its lines, in percent |
+| `Stat Agi >= 90%` | that stat's line rolled in the top tenth of its range |
+| `Stat Agi >= 3` | that stat *prints* at least 3 on this item |
+| `OverRoll` | a line above its normal maximum — only a Chaos widen does that |
+| `Refine >= 5` | refine level at least this |
+| `Favorite` | the star you put on it in game |
+| `AlwaysShow "…"` / `AlwaysHide "…"` | one item by name, ignoring rule order entirely |
+
+**The `%` is a real distinction, not decoration.** `Stat Agi >= 90%` asks how *well* the line rolled;
+`Stat Agi >= 3` asks what it *prints*. They are different questions with different answers: a 0% roll
+already prints two thirds of the maximum, so on an attribute that caps at 3, `>= 3` means maxed while
+`>= 90%` means genuinely lucky. The editor says so where you type it.
+
+You never have to guess a spelling. ValeLoot writes every item and stat name the game knows to
+`valeloot-items.txt`, and refreshes it when the game gets new content.
+
+## The editor
+
+`F8` opens it. There is nothing to install and no folder to choose — the mod serves the page itself, so it
+already knows your bag, your rules and the game's item catalog.
+
+- Your **real bag**, drawn as the game draws it, tinted by whichever rule claimed each cell.
+- Your rules as a **numbered cascade**, because first-match-wins means order is the filter. Drag to
+  reorder and watch the colours move.
+- **Point at a rule** and the bag dims so you can see exactly which items it took — not "15 items", but
+  *which* fifteen.
+- **Click an item** to build a rule from it, or to pin or silence that one item.
+- Counts, share, and an honest note when a rule claims nothing because a rule above it got there first.
+- A **text tab**, for power users and for sharing a filter with someone else.
+
+Saving writes `valeloot-filter.txt` and your bag recolours on the next inventory redraw.
+
+### The one port it opens
+
+The editor is served from the mod over loopback, on `http://127.0.0.1:38512/`.
+
+- It binds **`127.0.0.1` only**. It is reachable from this machine and from nothing else.
+- It serves exactly three things: its own editor page, your own rule file, and the bag/catalog data the
+  page draws. It carries **no game traffic**, and there is no network hook anywhere in the plugin.
+- Nothing leaves your machine.
+- Turn it off with `Enabled = false` under `[Editor]` in `BepInEx/config/com.savi.valeloot.cfg`. No port is
+  opened, and `F8` then opens a local copy of the editor as a plain file instead. Everything else keeps
+  working; the editor is a convenience, and highlighting is the product.
+
+An earlier version had no socket at all and shipped the editor as a file you opened yourself. It worked,
+and the process was miserable: find the file, open the right browser, grant a folder in a dialog. This is
+the trade, made deliberately and documented rather than hidden.
+
+## Settings
+
+`BepInEx/config/com.savi.valeloot.cfg`, created on first run.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `Highlight / TintCell` | `true` | Colour the cell. Off leaves the game's own plain highlight; the hover note still works. |
+| `Highlight / TintDepth` | `2` | How deep to colour. Only change this if cells stop colouring after a game update. |
+| `Highlight / HoverNote` | `true` | The tooltip line naming the matched rule. |
+| `Sound / Enabled` | `true` | Sounds on pickup. |
+| `Editor / Enabled` | `true` | The loopback editor server. |
+| `Editor / Port` | `38512` | Its port. |
+| `Editor / Hotkey` | `F8` | Any `UnityEngine.KeyCode` name. |
+
+Sounds are ordinary `.wav` files in `BepInEx/config/valeloot-sounds/`. Five are written on first run so a
+fresh install has something to play; overwrite `chime.wav` with anything you like and your rules do not
+change.
+
+## Good to know
+
+- **Sounds are for gear.** Equipment and artifacts make a noise when you pick them up. Cards, gems, potions
+  and materials don't yet — they still get coloured, just quietly. Gems and cards are next.
+- **The editor's bag fills in as you scroll.** It shows what it has seen since you logged in, so if the grid
+  looks short, open your bag and scroll once.
+- **`Stat Agi >= 3` needs a second after you log in.** If a rule like that looks wrong the moment you get
+  in, reopen your bag. `Stat Agi >= 90%` never has this problem.
+- **Artifacts have no `Type`.** Match them on rolls, refine or name instead.
+- **Ten items at once make one noise**, not ten.
+
+## When a game update breaks it
+
+It will, eventually. ValeLoot finds the game's inventory by name, and an update can rename things.
+
+If your bag stops lighting up after a patch, the fix is usually a new release rather than anything you can
+change. What helps is a copy of `BepInEx/LogOutput.log` — ValeLoot prints exactly what it found and what it
+didn't at startup, so a `MISS` in there names the broken part immediately. Paste it into an issue and that
+is enough to work with.
+
+## Building it yourself
+
+```
+dotnet build                      # the plugin
+bun run build:editor              # the editor page (committed, regenerate after editing it)
+dotnet build -t:Package           # the plugin-only zip
+dotnet build -t:PackageBundle     # the unzip-and-play zip, BepInEx included
+```
+
+No game install is needed to build: the mod resolves everything by name at runtime and references only the
+BepInEx NuGet package.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). BepInEx is bundled in the "with BepInEx" download, unmodified, under
+LGPL-2.1; its licence and a link to its source are in `NOTICE.txt` at the root of that zip.
