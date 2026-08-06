@@ -514,7 +514,7 @@ internal static class EditorServer
         json.Append(",\"threshold\":").Append(snap.Threshold.ToString(CultureInfo.InvariantCulture));
 
         json.Append(",\"catalog\":{\"ready\":").Append(snap.CatalogReady ? "true" : "false")
-            .Append(",\"equips\":").Append(snap.Items.Length.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"items\":").Append(snap.Items.Length.ToString(CultureInfo.InvariantCulture))
             .Append('}');
 
         /**

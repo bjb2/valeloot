@@ -296,9 +296,15 @@ internal static class FilterParser
             switch (keyword)
             {
                 case "name":
-                    if (remainder.Length == 0) { errors.Add(new FilterError(line, text, "Name needs a value")); break; }
-                    when.NameContains = Unquote(remainder);
+                {
+                    // `SplitList` and not `Unquote`: `Name Vampiric Fang Clip` is still one piece,
+                    // because only a COMMA separates, so every filter written before this line took
+                    // a list reads the same. A name with a comma in it was never expressible.
+                    List<string> names = SplitList(remainder);
+                    if (names.Count == 0) { errors.Add(new FilterError(line, text, "Name needs a value")); break; }
+                    when.Names = names.ToArray();
                     break;
+                }
 
                 case "type":
                 {

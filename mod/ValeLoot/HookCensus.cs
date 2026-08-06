@@ -277,13 +277,15 @@ internal static class HookCensus
         log($"census {(keyCodes > 0 ? "ok " : "MISS")} KeyCode members ({keyCodes})");
 
         /**
-         * The four hops from the frame hook's `self` to the two dictionaries the pickup watcher diffs:
-         * `PlayerSave.Data` -> `CharacterData.Inventory` -> `InventoryData.Equips`/`Artifacts`.
+         * The hops from the frame hook's `self` to the dictionaries the pickup watcher diffs:
+         * `PlayerSave.Data` -> `CharacterData.Inventory` -> `InventoryData.Equips`/`Artifacts`/
+         * `Cards`/`Gems`.
          *
          * Every one of them is a `{ get; set; }`, so the FIELD is `<Name>k__BackingField` and the
          * plain-name lookup returns -1 — indistinguishable from a rename, which is the mistake this
-         * census exists to make impossible. All four must resolve or no loot sound plays at all, and
-         * a player's pasted log is the only evidence of which one moved.
+         * census exists to make impossible. The first three must resolve or no loot sound plays at
+         * all; the last three each cost only their own kind of pickup. A player's pasted log is the
+         * only evidence of which one moved.
          */
         IntPtr playerSave = Il2CppMeta.FindClass("", "PlayerSave", GameAssemblies);
         IntPtr characterData = Il2CppMeta.FindClass("", "CharacterData", GameAssemblies);
@@ -293,6 +295,8 @@ internal static class HookCensus
         CensusField(results, log, "CharacterData.<Inventory> (the bag behind it)", characterData, "Inventory");
         CensusField(results, log, "InventoryData.<Equips> (uid -> equipment)", inventoryData, "Equips");
         CensusField(results, log, "InventoryData.<Artifacts> (uid -> artifact)", inventoryData, "Artifacts");
+        CensusField(results, log, "InventoryData.<Cards> (id -> card stack)", inventoryData, "Cards");
+        CensusField(results, log, "InventoryData.<Gems> (uid -> gem)", inventoryData, "Gems");
 
         return results;
     }

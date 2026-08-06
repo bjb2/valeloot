@@ -565,9 +565,9 @@ function matchesCondition(item, when, context) {
     return false;
   if (when.maxAvgRoll !== undefined && (item.avgRoll === null || item.avgRoll > when.maxAvgRoll))
     return false;
-  if (when.nameContains) {
-    const needle = when.nameContains.toLowerCase();
-    if (!item.name.toLowerCase().includes(needle))
+  if (when.names?.length) {
+    const name = item.name.toLowerCase();
+    if (!when.names.some((want) => name.includes(want.toLowerCase())))
       return false;
   }
   if (when.hasChaos !== undefined) {
@@ -769,11 +769,9 @@ function parseRuleBlock(block, index) {
     const remainder = rest.join(" ").trim();
     switch (keyword) {
       case "name":
-        if (!remainder) {
+        when.names = splitList(remainder);
+        if (!when.names.length)
           errors.push({ line, text, message: "Name needs a value" });
-          break;
-        }
-        when.nameContains = unquote(remainder);
         break;
       case "type":
         when.slotTypes = splitList(remainder);
@@ -944,8 +942,8 @@ function formatLootFilter(parsed) {
   for (const rule of parsed.rules) {
     out.push(`${rule.mute ? "Hide" : "Show"} "${rule.name}"`);
     const w = rule.when;
-    if (w.nameContains)
-      out.push(`    Name      "${w.nameContains}"`);
+    if (w.names?.length)
+      out.push(`    Name      ${w.names.map((n) => `"${n}"`).join(", ")}`);
     if (w.slotTypes?.length)
       out.push(`    Type      ${w.slotTypes.join(", ")}`);
     for (const stat of w.stats ?? []) {
@@ -1051,7 +1049,7 @@ const KEYWORDS = [
   ['Threshold', 'what counts as a top roll, e.g. 90 — once, at the top'],
 ];
 const CONDITIONS = [
-  ['Name', 'the item name contains this'],
+  ['Name', 'name(s) or id(s), comma separated — any one matching is enough'],
   ['Type', 'item type(s), comma separated'],
   ['Stat', 'Agi >= 3 (the printed value) or Agi >= 90% (roll quality)'],
   ['AvgRoll', 'average roll %, e.g. < 35'],

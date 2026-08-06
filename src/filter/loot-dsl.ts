@@ -290,8 +290,10 @@ function parseRuleBlock(block: Block, index: number): { rule: LootRule; errors: 
 
     switch (keyword) {
       case 'name':
-        if (!remainder) { errors.push({ line, text, message: 'Name needs a value' }); break; }
-        when.nameContains = unquote(remainder);
+        // `splitList` and not `unquote`: only a COMMA separates, so `Name Vampiric Fang Clip` is
+        // still one piece and every filter written before Name took a list reads the same.
+        when.names = splitList(remainder);
+        if (!when.names.length) errors.push({ line, text, message: 'Name needs a value' });
         break;
       case 'type':
         when.slotTypes = splitList(remainder);
@@ -454,7 +456,7 @@ export function formatLootFilter(parsed: Pick<ParsedFilter, 'rules' | 'overrides
   for (const rule of parsed.rules) {
     out.push(`${rule.mute ? 'Hide' : 'Show'} "${rule.name}"`);
     const w = rule.when;
-    if (w.nameContains) out.push(`    Name      "${w.nameContains}"`);
+    if (w.names?.length) out.push(`    Name      ${w.names.map((n) => `"${n}"`).join(', ')}`);
     if (w.slotTypes?.length) out.push(`    Type      ${w.slotTypes.join(', ')}`);
     for (const stat of w.stats ?? []) {
       if (stat.minRollPct !== undefined) out.push(`    Stat      ${stat.stat} >= ${Math.round(stat.minRollPct)}%`);

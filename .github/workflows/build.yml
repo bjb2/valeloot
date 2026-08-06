@@ -1,0 +1,75 @@
+# Everything a clone has to be able to do, on every push.
+#
+# There is no publishing here on purpose. Releases are cut by hand: `-t:Package` and
+# `-t:PackageBundle` build the zips locally and `gh release create` uploads them, because the
+# bundled BepInEx archive is deliberately not in the repository and a release should be a decision
+# rather than a consequence of pushing.
+#
+# What this DOES guard is the one thing a human cannot see in a diff: `mod/ValeLoot/editor/
+# ValeLoot-editor.html` is a BUILD OUTPUT of `src/filter/` and `tools/valeloot-editor/`, committed
+# to the repo and then embedded into the DLL. Edit the sources, forget `bun run build:editor`, and
+# the mod ships an editor whose filter parser disagrees with the mod's own — silently, with the
+# right colours in the editor and the wrong ones in the bag. Rebuilding and demanding a clean
+# `git diff` is the whole check.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # ubuntu, deliberately: the plugin is Windows-only at RUNTIME (winmm, and a Windows game), but
+    # it compiles anywhere, references no game assembly and resolves every il2cpp symbol by name at
+    # runtime. A build that needs Windows would be a build that quietly grew a dependency on one.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Regenerate the editor page and fail if it differs from the committed one. This runs BEFORE
+      # the plugin build so the DLL is compiled against a page we have just proven is current.
+      - name: Editor artifact is in sync with its sources
+        run: |
+          bun install --frozen-lockfile
+          bun run build:editor
+          git diff --exit-code -- mod/ValeLoot/editor/ValeLoot-editor.html \
+            || {
+              echo "::error file=mod/ValeLoot/editor/ValeLoot-editor.html::stale — run 'bun run build:editor' and commit the result"
+              exit 1
+            }
+
+      # The vendored parser and its type declarations. Not part of the plugin build, so nothing else
+      # would notice them breaking.
+      - name: Type-check the filter sources
+        run: |
+          ./node_modules/.bin/tsc --noEmit --strict --target es2022 --module esnext \
+            --moduleResolution bundler --allowImportingTsExtensions \
+            src/filter/loot-dsl.ts src/filter/loot-filter.ts
+
+      - name: Build the plugin
+        run: dotnet build mod/ValeLoot/ValeLoot.csproj -c Release
+
+      # Proves `-t:Package` still works without a game install, and hands you the zip to test with
+      # off any commit. This is NOT a release: nothing is tagged and nothing is published.
+      - name: Package the plugin zip
+        run: dotnet build mod/ValeLoot/ValeLoot.csproj -c Release -t:Package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: valeloot-plugin-zip
+          path: mod/ValeLoot/dist/*.zip
+          if-no-files-found: error

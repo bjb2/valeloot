@@ -87,14 +87,17 @@ internal static class ItemReader
         public readonly int Refine;
         public readonly int Substats;
         public readonly int ChaosType;
+        /// <summary>`StackableItemData.Count`, or -1 on a class that holds one item per entry.</summary>
+        public readonly int Stack;
 
-        public Layout(int id, int favorite, int refine, int substats, int chaosType)
+        public Layout(int id, int favorite, int refine, int substats, int chaosType, int stack)
         {
             Id = id;
             Favorite = favorite;
             Refine = refine;
             Substats = substats;
             ChaosType = chaosType;
+            Stack = stack;
         }
     }
 
@@ -262,10 +265,35 @@ internal static class ItemReader
             Il2CppMeta.PropertyFieldOffset(klass, "Favorite"),
             Il2CppMeta.PropertyFieldOffset(klass, "Refine"),
             Il2CppMeta.PropertyFieldOffset(klass, "Substats"),
-            Il2CppMeta.PropertyFieldOffset(klass, "ChaosType"));
+            Il2CppMeta.PropertyFieldOffset(klass, "ChaosType"),
+            Il2CppMeta.PropertyFieldOffset(klass, "Count"));
         _layouts[klass] = layout;
         return layout;
     }
+
+    /**
+     * How many of this item one bag entry holds.
+     *
+     * Cards stack: `StackableItemData` keys one dictionary entry per card ID and counts copies in
+     * `Count`, so a second copy of a card you already own changes no key. Everything else in the
+     * bag has a UID per item and no `Count` field at all, which reads as one — the caller does not
+     * have to know which kind it is holding.
+     *
+     * Floored at one. A zero or negative stack is a bag entry mid-removal, and reporting it as an
+     * arrival of "-1 items" would corrupt the watcher's baseline arithmetic.
+     */
+    public static int StackCount(IntPtr itemData)
+    {
+        if (itemData == IntPtr.Zero) return 1;
+        int offset = LayoutFor(Il2CppMeta.ClassOf(itemData)).Stack;
+        if (offset < 0) return 1;
+        int count = Marshal.ReadInt32(itemData, offset);
+        return count < 1 ? 1 : count;
+    }
+
+    /// <summary>`Count`'s offset on this item class, or -1 when it does not stack. For a cheap
+    /// stack-total sweep that must not allocate or resolve anything per entry.</summary>
+    public static int StackFieldOffset(IntPtr klass) => LayoutFor(klass).Stack;
 
     /// <summary>One item, spelled out — so a `probe` reply describes a real item, not a row of numbers.</summary>
     public static string Describe(LootFilter.ItemFacts facts)

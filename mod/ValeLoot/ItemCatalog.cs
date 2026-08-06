@@ -47,7 +47,19 @@ internal static class ItemCatalog
     public const string ReferenceFileName = "valeloot-items.txt";
 
     /// <summary>How the reference file records what it was generated from, so a rewrite is cheap to decide.</summary>
-    private const string CountMarker = "# equips: ";
+    private const string CountMarker = "# items: ";
+
+    /**
+     * The type name each non-equip kind gets, since `EquipType` has nothing to say about them.
+     *
+     * These are ValeLoot's own words, not the game's, and that is the point: the game gives these
+     * four kinds no type enum at all, so without a name here a filter could only reach them one id
+     * at a time. They are what `Type Card`, `Type Gem`, `Type Consumable` and `Type Junk` match.
+     */
+    private const string CardKind = "Card";
+    private const string GemKind = "Gem";
+    private const string ConsumableKind = "Consumable";
+    private const string JunkKind = "Junk";
 
     /// <summary>
     /// A cap the game refused to give a range for — this stat is not in this item's substat pool.
@@ -72,14 +84,18 @@ internal static class ItemCatalog
     private delegate IntPtr GetSubstatConfigFn(IntPtr config, IntPtr methodInfo);
     private unsafe delegate byte GetSubstatRangeFn(int statType, IntPtr substatConfig, int* min, int* max, IntPtr methodInfo);
 
-    /// <summary>One equip, as the game's own config describes it.</summary>
+    /// <summary>One equip, card or gem, as the game's own config describes it.</summary>
     internal sealed class Entry
     {
         public string Id = "";
         public string DisplayName = "";
-        /// <summary>`EquipType`'s member name, resolved live — never a hardcoded ordinal table.</summary>
+        /// <summary>`EquipType`'s member name for an equip, resolved live — never a hardcoded
+        /// ordinal table — and <see cref="CardKind"/>/<see cref="GemKind"/> for the two kinds the
+        /// game gives no type enum at all.</summary>
         public string TypeName = "";
+        /// <summary>Equips only: `EquipConfig.Set`. Empty on a card or a gem, which have none.</summary>
         public string Set = "";
+        /// <summary>Equips only: `EquipConfig.LevelRequired`. Zero on a card or a gem.</summary>
         public int LevelRequired;
 
         /// <summary>
@@ -106,12 +122,19 @@ internal static class ItemCatalog
     /// <summary>Configs read and indexed. False means every catalog-backed condition must decline.</summary>
     public static bool Ready { get; private set; }
 
-    /// <summary>Equips the catalog holds. Zero until <see cref="Ready"/>.</summary>
+    /// <summary>Configs the catalog holds, of every kind. Zero until <see cref="Ready"/>.</summary>
     public static int Count { get; private set; }
+
+    /// <summary>How many of <see cref="Count"/> are equips — the only kind with substat caps.</summary>
+    public static int Equips { get; private set; }
+    public static int Cards { get; private set; }
+    public static int Gems { get; private set; }
+    public static int Consumables { get; private set; }
+    public static int Junks { get; private set; }
 
     public static string Summary { get; private set; } = "not installed";
 
-    /// <summary>Every equip the catalog holds — the reference file's source, and nothing else's.</summary>
+    /// <summary>Everything the catalog holds — the reference file's source, and nothing else's.</summary>
     public static IReadOnlyCollection<Entry> All => _entries.Values;
 
     private static Action<string> _log = _ => { };
@@ -119,6 +142,10 @@ internal static class ItemCatalog
 
     private static IntPtr _appClass;
     private static int _equipsOffset = -1;
+    private static int _cardsOffset = -1;
+    private static int _gemsOffset = -1;
+    private static int _consumablesOffset = -1;
+    private static int _junksOffset = -1;
     private static int _substatsMapOffset = -1;
     private static int _idOffset = -1;
     private static int _displayNameOffset = -1;
@@ -163,6 +190,20 @@ internal static class ItemCatalog
         // still worth reporting, because if it ever reads missing, the game moved the whole database.
         _substatsMapOffset = Il2CppMeta.FieldOffset(runtimeClass, "EquipSubstats");
 
+        // The other four config maps, indexed the same way and required by nothing.
+        //
+        // They are here because their ids look nothing like their names: a card called "Abomination
+        // Card" has the id `Abomination`, and the lure named "Buzzing Hive Fragment" has the id
+        // `Lure Sting`. `InventoryItemData.Id` is all the pickup watcher has to go on, so without
+        // these a `Name` line aimed at one of them could only ever match an id nobody has read.
+        //
+        // `Cosmetics` is deliberately absent: `CosmeticItem` is not a `BaseConfig` and keeps a
+        // `CosmeticSlot` where `DisplayName` would be, so the shared offsets do not describe it.
+        _cardsOffset = Il2CppMeta.FieldOffset(runtimeClass, "Cards");
+        _gemsOffset = Il2CppMeta.FieldOffset(runtimeClass, "Gems");
+        _consumablesOffset = Il2CppMeta.FieldOffset(runtimeClass, "Consumables");
+        _junksOffset = Il2CppMeta.FieldOffset(runtimeClass, "Junks");
+
         // `Id` and `DisplayName` are declared on the BASE (`BaseConfig`), four classes up from
         // `EquipConfig`, so the walk-up form is not optional here. They are plain serialised fields
         // rather than auto-properties, which is why this is not the backing-field lookup the data
@@ -187,7 +228,9 @@ internal static class ItemCatalog
 
         // The offsets go in the log line on purpose. On a future game build that breaks this, a
         // player's pasted log is the only evidence of WHAT moved, and one word per field says it.
-        Summary = $"App.ServerRuntime {Hex(appField)}, Equips {Hex(_equipsOffset)}, EquipSubstats {Hex(_substatsMapOffset)}, "
+        Summary = $"App.ServerRuntime {Hex(appField)}, Equips {Hex(_equipsOffset)}, Cards {Hex(_cardsOffset)}, "
+                + $"Gems {Hex(_gemsOffset)}, Consumables {Hex(_consumablesOffset)}, Junks {Hex(_junksOffset)}, "
+                + $"EquipSubstats {Hex(_substatsMapOffset)}, "
                 + $"Id {Hex(_idOffset)}, DisplayName {Hex(_displayNameOffset)}, Type {Hex(_typeOffset)}, "
                 + $"Set {Hex(_setOffset)}, LevelRequired {Hex(_levelOffset)}, Values {Hex(_substatValuesOffset)}, "
                 + $"{_equipTypeNames.Count} equip types, ranges {(RangesReadable ? "readable" : "UNREADABLE")}";
@@ -231,6 +274,11 @@ internal static class ItemCatalog
         Installed = false;
         Ready = false;
         Count = 0;
+        Equips = 0;
+        Cards = 0;
+        Gems = 0;
+        Consumables = 0;
+        Junks = 0;
         _entries.Clear();
         _equipTypeNames.Clear();
         _getSubstatConfig = null;
@@ -247,8 +295,9 @@ internal static class ItemCatalog
 
     /// <summary>What this is doing, for the log — the counters that separate "bound" from "answering".</summary>
     public static string Status()
-        => $"item catalog: installed {Installed}, ready {Ready}, {Count} equips, "
-         + $"{_equipTypeNames.Count} equip types, caps {(RangesReadable ? "readable" : "UNREADABLE")}";
+        => $"item catalog: installed {Installed}, ready {Ready}, {Equips} equips, {Cards} cards, "
+         + $"{Gems} gems, {Consumables} consumables, {Junks} junk, {_equipTypeNames.Count} equip types, "
+         + $"caps {(RangesReadable ? "readable" : "UNREADABLE")}";
 
     /// <summary>The catalog's name for an item, or null when it does not know it (or is not ready).</summary>
     public static string? DisplayName(string itemId) => Lookup(itemId)?.DisplayName;
@@ -370,7 +419,10 @@ internal static class ItemCatalog
             return false;
         }
 
-        IntPtr equips = _equipsOffset >= 0 ? Marshal.ReadIntPtr(runtime, _equipsOffset) : IntPtr.Zero;
+        // Equips is the catalog: an empty one means the client has not finished loading, and the
+        // whole read is retried. Cards and gems are indexed alongside it and each is allowed to be
+        // missing or empty — a build that renames one of them must not cost the other two.
+        IntPtr equips = ReadMap(runtime, _equipsOffset);
         List<(IntPtr Key, IntPtr Value)> rows = Il2CppMeta.DictionaryEntries(equips);
         if (rows.Count == 0)
         {
@@ -378,6 +430,45 @@ internal static class ItemCatalog
             return false;
         }
 
+        Equips = Index(rows, "", true);
+        Cards = Index(Il2CppMeta.DictionaryEntries(ReadMap(runtime, _cardsOffset)), CardKind, false);
+        Gems = Index(Il2CppMeta.DictionaryEntries(ReadMap(runtime, _gemsOffset)), GemKind, false);
+        Consumables = Index(Il2CppMeta.DictionaryEntries(ReadMap(runtime, _consumablesOffset)), ConsumableKind, false);
+        Junks = Index(Il2CppMeta.DictionaryEntries(ReadMap(runtime, _junksOffset)), JunkKind, false);
+
+        Count = _entries.Count;
+        Ready = Count > 0;
+        if (!Ready)
+        {
+            ReportUnavailableOnce("no equip config in App.ServerRuntime.Equips could be read");
+            return false;
+        }
+
+        _log($"catalog ready: {Equips} equips, {Cards} cards, {Gems} gems, {Consumables} consumables, {Junks} junk");
+        WriteReference();
+        return true;
+    }
+
+    private static IntPtr ReadMap(IntPtr runtime, int offset)
+        => offset >= 0 ? Marshal.ReadIntPtr(runtime, offset) : IntPtr.Zero;
+
+    /**
+     * Index one config dictionary, and return how many entries it contributed.
+     *
+     * Only an equip's config is HELD. `Formula.GetSubstatConfig` takes an `EquipConfig`, and handing
+     * it a `CardConfig` because both are reachable through an `IntPtr` is exactly the type-confused
+     * native call that has taken this game process down before. A card or gem entry carries no
+     * config, so <see cref="CapFor"/> finds none and `Stat Agi &gt;= 3` declines on it rather than
+     * guessing — which is the right answer anyway, since neither rolls substats.
+     *
+     * `Type`, `Set` and `LevelRequired` are likewise `EquipConfig`'s own fields, at offsets past the
+     * point where `CardConfig` and `GemConfig` diverge. Reading them off a card would read whatever
+     * that class keeps at the same byte. `Id` and `DisplayName` are the only two that are shared,
+     * because they are declared on `BaseConfig`, and they are the two this exists for.
+     */
+    private static int Index(List<(IntPtr Key, IntPtr Value)> rows, string kind, bool equip)
+    {
+        int added = 0;
         foreach ((IntPtr key, IntPtr value) in rows)
         {
             if (value == IntPtr.Zero) continue;
@@ -388,29 +479,21 @@ internal static class ItemCatalog
             if (id.Length == 0) id = Il2CppMeta.ReadStringField(value, _idOffset) ?? "";
             if (id.Length == 0) continue;
 
-            int type = _typeOffset >= 0 ? Marshal.ReadInt32(value, _typeOffset) : int.MinValue;
+            int type = equip && _typeOffset >= 0 ? Marshal.ReadInt32(value, _typeOffset) : int.MinValue;
             _entries[id] = new Entry
             {
                 Id = id,
                 DisplayName = Il2CppMeta.ReadStringField(value, _displayNameOffset) ?? "",
-                TypeName = _equipTypeNames.TryGetValue(type, out string? typeName) ? typeName : "",
-                Set = Il2CppMeta.ReadStringField(value, _setOffset) ?? "",
-                LevelRequired = _levelOffset >= 0 ? Marshal.ReadInt32(value, _levelOffset) : 0,
-                Config = value,
+                TypeName = equip
+                    ? (_equipTypeNames.TryGetValue(type, out string? typeName) ? typeName : "")
+                    : kind,
+                Set = equip ? Il2CppMeta.ReadStringField(value, _setOffset) ?? "" : "",
+                LevelRequired = equip && _levelOffset >= 0 ? Marshal.ReadInt32(value, _levelOffset) : 0,
+                Config = equip ? value : IntPtr.Zero,
             };
+            added++;
         }
-
-        Count = _entries.Count;
-        Ready = Count > 0;
-        if (!Ready)
-        {
-            ReportUnavailableOnce("no equip config in App.ServerRuntime.Equips could be read");
-            return false;
-        }
-
-        _log($"catalog ready: {Count} equips");
-        WriteReference();
-        return true;
+        return added;
     }
 
     private static void ReportUnavailableOnce(string reason)
@@ -447,7 +530,7 @@ internal static class ItemCatalog
             Directory.CreateDirectory(_configDirectory);
             File.WriteAllText(path, BuildReference(_entries.Values, ItemReader.StatNames, Count),
                               new UTF8Encoding(false));
-            _log($"wrote {ReferenceFileName} ({Count} equips) to {path}");
+            _log($"wrote {ReferenceFileName} ({Count} items) to {path}");
         }
         catch (Exception e)
         {
@@ -456,7 +539,7 @@ internal static class ItemCatalog
         }
     }
 
-    /// <summary>True when the file already on disk was generated from this many equips.</summary>
+    /// <summary>True when the file already on disk was generated from this many configs.</summary>
     internal static bool ReferenceIsCurrent(string path, int count)
     {
         if (!File.Exists(path)) return false;
@@ -494,10 +577,19 @@ internal static class ItemCatalog
             .Append("# changes. It is here so you never have to guess a spelling. Your rules go in\n")
             .Append("# ").Append(FilterFile.FileName).Append(", next to this file.\n")
             .Append("#\n")
-            .Append("# Anything in the Name column works as a rule line, quoted if it has spaces:\n")
+            .Append("# Equipment, cards, gems, consumables and junk are listed. Only equipment has a set, a\n")
+            .Append("# level requirement and substats, so those columns are blank for the rest and `Stat`,\n")
+            .Append("# `TopRolls`, `AvgRoll` and `OverRoll` never match one of them. Their ids are often\n")
+            .Append("# nothing like their names — \"Buzzing Hive Fragment\" is `Lure Sting` — which is exactly\n")
+            .Append("# why this file has both columns.\n")
+            .Append("#\n")
+            .Append("# Anything in the Name column works as a rule line, quoted if it has spaces, and Name\n")
+            .Append("# and Type both take a comma-separated list meaning ANY of these:\n")
             .Append("#\n")
             .Append("#     Name \"Vampiric Fang Clip\"      matches the name, the id, or the text on the cell\n")
+            .Append("#     Name \"Buzzing Hive Fragment\", \"Abyssal Idol\"    either one\n")
             .Append("#     Type Dagger, Katar             the Type column below\n")
+            .Append("#     Type Card, Gem, Consumable, Junk               everything of those kinds\n")
             .Append("#     Stat Agi >= 3                  the printed value, from the Stats section below\n")
             .Append("#     Stat Agi >= 90%                how WELL that line rolled — a different question\n")
             .Append("#\n")
@@ -516,7 +608,9 @@ internal static class ItemCatalog
                     .Append("  Lv   Name                                     Set                  id\n");
             }
             text.Append("  ")
-                .Append(Pad(entry.LevelRequired.ToString(CultureInfo.InvariantCulture), 4))
+                .Append(Pad(entry.LevelRequired > 0
+                            ? entry.LevelRequired.ToString(CultureInfo.InvariantCulture)
+                            : "", 4))
                 .Append(' ')
                 .Append(Pad(entry.DisplayName.Length > 0 ? entry.DisplayName : "(unnamed)", 40))
                 .Append(' ')

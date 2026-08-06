@@ -47,8 +47,8 @@ developer's stance* below.
   (clearly lit), `glow` (unmistakable, and it animates). The colour is whatever `#rrggbb` you wrote.
 - **Names the rule on hover.** The item tooltip gains one line, in that rule's colour, saying which of
   your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
-- **Plays a sound when a matching item is picked up** — bag open or closed, once per item. Equipment and
-  artifacts today; see *Good to know*.
+- **Plays a sound when a matching item is picked up** — bag open or closed, once per pickup. Every bag:
+  gear, artifacts, cards, gems, consumables and junk. See *Good to know*.
 - **Reloads while you play.** Save your rules and the bag recolours on the next inventory redraw. No
   restart, no relog.
 - **Comes with an editor.** Press `F8` in game and your browser opens on it, already showing your real bag.
@@ -231,14 +231,23 @@ change.
 
 ## Good to know
 
-- **Sounds are for gear.** Equipment and artifacts make a noise when you pick them up. Cards, gems, potions
-  and materials don't yet — they still get coloured, just quietly. Gems and cards are next.
+- **Every bag makes noise.** Equipment, artifacts, cards, gems, consumables, cosmetics and junk all ping
+  when you pick them up, and a card or a lure you already own counts, because a second copy is still a
+  drop. Nothing is excluded by kind — your rules decide what is worth hearing about.
+- **One rule, several names.** `Name "Buzzing Hive Fragment", "Abyssal Idol"` matches either one. `Type`
+  reads as a list too, and `Type Card, Gem, Consumable, Junk` claims whole kinds at once.
+- **Names work even when the id doesn't look like one.** ValeLoot reads the game's own configs, so
+  `Name "Abomination Card"` finds the card the game calls `Abomination`, and `Name "Buzzing Hive
+  Fragment"` finds `Lure Sting`. Both columns are in `valeloot-items.txt`.
+- **Only equipment rolls substats.** `Stat`, `TopRolls`, `AvgRoll` and `OverRoll` never match a card, gem,
+  consumable or junk. Use `Name`, `Type` or `Favorite` for those.
 - **The editor's bag fills in as you scroll.** It shows what it has seen since you logged in, so if the grid
   looks short, open your bag and scroll once.
 - **`Stat Agi >= 3` needs a second after you log in.** If a rule like that looks wrong the moment you get
   in, reopen your bag. `Stat Agi >= 90%` never has this problem.
 - **Artifacts have no `Type`.** Match them on rolls, refine or name instead.
-- **Ten items at once make one noise**, not ten.
+- **Ten items at once make one noise**, not ten. A rule with no conditions claims your whole bag and will
+  chime at everything — that is the one way to turn this into a metronome, and it is your own doing.
 
 ## When a game update breaks it
 

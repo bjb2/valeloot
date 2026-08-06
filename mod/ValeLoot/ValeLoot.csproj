@@ -7,8 +7,14 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Drives both the assembly version and the name of the shipped zip. -->
-    <Version>0.1.0</Version>
+    <!--
+      Drives both the assembly version and the name of the shipped zip.
+
+      Bumped when the code diverges from the last release, NOT when a release is cut. A tree that
+      still says 0.1.0 after 0.1.0 shipped builds `dist/ValeLoot-0.1.0.zip` with different bytes
+      from the one on the releases page, and nothing anywhere would notice.
+    -->
+    <Version>0.2.0</Version>
     <!-- BepInEx BE packages are prerelease by definition. -->
     <NoWarn>$(NoWarn);NU5104</NoWarn>
     <!--

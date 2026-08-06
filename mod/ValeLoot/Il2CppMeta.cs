@@ -262,57 +262,123 @@ internal static class Il2CppMeta
         return max < 0 || max > int.MaxValue ? -1 : (int)max;
     }
 
+    /**
+     * The inline `Entry[]` layout of one `Dictionary&lt;K, V&gt;` instantiation.
+     *
+     * Resolved by NAME every time, including the stride, because the IL2CPP dump reports 0x0 for
+     * every field of a generic type — layout exists only per instantiation. Hardcoding the textbook
+     * layout (hashCode 0, next 4, key 8, value 16, stride 24) would be an assumption about generic
+     * sharing, and this file has already paid once for assuming instead of reading.
+     */
+    private readonly struct DictLayout
+    {
+        public readonly IntPtr Entries;
+        public readonly int Count;
+        public readonly int Key;
+        public readonly int Value;
+        public readonly int Next;
+        public readonly int Stride;
+
+        private DictLayout(IntPtr entries, int count, int key, int value, int next, int stride)
+        {
+            Entries = entries;
+            Count = count;
+            Key = key;
+            Value = value;
+            Next = next;
+            Stride = stride;
+        }
+
+        /// <summary>False when ANY piece failed to resolve — a mis-strided walk emits garbage.</summary>
+        public static bool TryResolve(IntPtr dict, out DictLayout layout)
+        {
+            layout = default;
+            if (dict == IntPtr.Zero) return false;
+
+            IntPtr dictClass = ClassOf(dict);
+            int entriesOffset = FieldOffset(dictClass, "_entries");
+            int countOffset = FieldOffset(dictClass, "_count");
+            if (entriesOffset < 0 || countOffset < 0) return false;
+
+            IntPtr entries = Marshal.ReadIntPtr(dict, entriesOffset);
+            int count = Marshal.ReadInt32(dict, countOffset);
+            int capacity = ArrayLength(entries);
+            if (entries == IntPtr.Zero || count <= 0 || capacity < 0) return false;
+            if (count > capacity) count = capacity;         // never read past the array
+
+            // Entry is a STRUCT stored inline, so its field offsets include the boxed object header
+            // that inline elements do not have — subtract it. Stride likewise comes from the element
+            // class rather than sizeof(the fields we happen to know about).
+            IntPtr entryClass = IL2CPP.il2cpp_class_get_element_class(ClassOf(entries));
+            if (entryClass == IntPtr.Zero) return false;
+            int keyOffset = FieldOffset(entryClass, "key") - 0x10;
+            int valueOffset = FieldOffset(entryClass, "value") - 0x10;
+            int nextOffset = FieldOffset(entryClass, "next") - 0x10;
+            int stride = (int)IL2CPP.il2cpp_class_instance_size(entryClass) - 0x10;
+            if (keyOffset < 0 || valueOffset < 0 || nextOffset < 0 || stride <= 0) return false;
+
+            layout = new DictLayout(entries, count, keyOffset, valueOffset, nextOffset, stride);
+            return true;
+        }
+
+        /// <summary>The i-th slot, when it holds anything. A removed slot keeps its place in the
+        /// array: .NET marks it with next &lt; -1 and clears the reference key. Both are checked,
+        /// because either alone can be true transiently.</summary>
+        public bool Live(int index, out IntPtr key, out IntPtr value)
+        {
+            IntPtr entry = Entries + 0x20 + (index * Stride);
+            key = IntPtr.Zero;
+            value = IntPtr.Zero;
+            if (Marshal.ReadInt32(entry, Next) < -1) return false;
+            key = Marshal.ReadIntPtr(entry, Key);
+            if (key == IntPtr.Zero) return false;
+            value = Marshal.ReadIntPtr(entry, Value);
+            return true;
+        }
+    }
+
     /// <summary>
     /// Walk a <c>Dictionary&lt;string, T&gt;</c> and yield its live (key, value) pointers.
     ///
-    /// EVERY offset here is resolved by name at runtime, including the Entry stride, because the
-    /// IL2CPP dump reports 0x0 for every field of a generic type — layout exists only per
-    /// instantiation. Hardcoding the textbook layout (hashCode 0, next 4, key 8, value 16, stride
-    /// 24) would be an assumption about generic sharing, and this file has already paid once for
-    /// assuming instead of reading.
-    ///
-    /// Returns an EMPTY list rather than guessing if any field fails to resolve: a silently
+    /// Returns an EMPTY list rather than guessing if the layout fails to resolve: a silently
     /// mis-strided walk would emit plausible-looking garbage into the player's loot ledger, which
     /// is worse than reporting nothing.
     /// </summary>
     public static List<(IntPtr Key, IntPtr Value)> DictionaryEntries(IntPtr dict)
     {
         var result = new List<(IntPtr, IntPtr)>();
-        if (dict == IntPtr.Zero) return result;
+        if (!DictLayout.TryResolve(dict, out DictLayout layout)) return result;
 
-        IntPtr dictClass = ClassOf(dict);
-        int entriesOffset = FieldOffset(dictClass, "_entries");
-        int countOffset = FieldOffset(dictClass, "_count");
-        if (entriesOffset < 0 || countOffset < 0) return result;
-
-        IntPtr entries = Marshal.ReadIntPtr(dict, entriesOffset);
-        int count = Marshal.ReadInt32(dict, countOffset);
-        int capacity = ArrayLength(entries);
-        if (entries == IntPtr.Zero || count <= 0 || capacity < 0) return result;
-        if (count > capacity) count = capacity;             // never read past the array
-
-        // Entry is a STRUCT stored inline, so its field offsets include the boxed object header
-        // that inline elements do not have — subtract it. Stride likewise comes from the element
-        // class rather than sizeof(the fields we happen to know about).
-        IntPtr entryClass = IL2CPP.il2cpp_class_get_element_class(ClassOf(entries));
-        if (entryClass == IntPtr.Zero) return result;
-        int keyOffset = FieldOffset(entryClass, "key") - 0x10;
-        int valueOffset = FieldOffset(entryClass, "value") - 0x10;
-        int nextOffset = FieldOffset(entryClass, "next") - 0x10;
-        int stride = (int)IL2CPP.il2cpp_class_instance_size(entryClass) - 0x10;
-        if (keyOffset < 0 || valueOffset < 0 || nextOffset < 0 || stride <= 0) return result;
-
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < layout.Count; i++)
         {
-            IntPtr entry = entries + 0x20 + (i * stride);
-            // A removed slot keeps its place in the array: .NET marks it with next < -1 and clears
-            // the reference key. Both are checked because either alone can be true transiently.
-            if (Marshal.ReadInt32(entry, nextOffset) < -1) continue;
-            IntPtr key = Marshal.ReadIntPtr(entry, keyOffset);
-            if (key == IntPtr.Zero) continue;
-            result.Add((key, Marshal.ReadIntPtr(entry, valueOffset)));
+            if (layout.Live(i, out IntPtr key, out IntPtr value)) result.Add((key, value));
         }
         return result;
+    }
+
+    /**
+     * Sum an `int` field, read at <paramref name="valueFieldOffset"/> on every live VALUE of a
+     * <c>Dictionary&lt;string, T&gt;</c>. Zero when the offset is unknown or the layout did not
+     * resolve.
+     *
+     * This exists so a STACK total can join a cheap "did anything change?" check. Picking up a
+     * second copy of a card the player already owns adds no dictionary entry — it bumps that
+     * entry's `Count` — so a check comparing only dictionary sizes cannot see it. Unlike
+     * <see cref="DictionaryEntries"/> this allocates nothing and reads no strings, which is what
+     * makes it affordable several times a second.
+     */
+    public static long SumValueInt32(IntPtr dict, int valueFieldOffset)
+    {
+        if (valueFieldOffset < 0) return 0;
+        if (!DictLayout.TryResolve(dict, out DictLayout layout)) return 0;
+
+        long total = 0;
+        for (int i = 0; i < layout.Count; i++)
+        {
+            if (!layout.Live(i, out _, out IntPtr value) || value == IntPtr.Zero) continue;
+            total += Marshal.ReadInt32(value, valueFieldOffset);
+        }
+        return total;
     }
 
     /// <summary>Walk a <c>List&lt;T&gt;</c> of reference types (`_items` backing array + `_size`).</summary>

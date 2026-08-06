@@ -19,6 +19,7 @@ WHAT IT DOES
 * Names the rule on hover. The item tooltip gains one line, in that rule's colour, saying which of
   your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
 * Plays a sound when you pick a match up - bag open or closed, once per pickup, never on a repaint.
+  Every bag: gear, artifacts, cards, gems, consumables and junk.
 * Reloads while the game is running. Save the filter file and the next time the inventory redraws it
   is using your new rules. No restart, no relog.
 * Comes with its own rule editor, on a key. Press F8 in game and your browser opens on ValeLoot's own
@@ -186,7 +187,10 @@ The log is BepInEx/LogOutput.log in your game folder. A healthy boot looks like 
     [Info   :  ValeLoot] tooltip inject ready (OnPointerEnter + TMP_Text.set_text; Data 0x70,
                          UID 0x20, floor 400 chars)
     [Info   :  ValeLoot] pickup watch ready (PlayerSave.Data 0x160, CharacterData.Inventory 0xf0,
-                         InventoryData.Equips 0x10, InventoryData.Artifacts 0x18) - loot sounds fire
+                         InventoryData.Equips 0x10, InventoryData.Artifacts 0x18,
+                         InventoryData.Cards 0x20, InventoryData.Gems 0x28,
+                         InventoryData.Consumables 0x38, InventoryData.Cosmetics 0x40,
+                         InventoryData.Junks 0x30, CharacterData.UID 0x20) - loot sounds fire
                          when an item lands in your bag, open or closed, checked 4x a second off the
                          frame tick.
     [Info   :  ValeLoot] editor fallback page written to ...\BepInEx\config\ValeLoot-editor.html -
@@ -200,8 +204,8 @@ The log is BepInEx/LogOutput.log in your game folder. A healthy boot looks like 
 
 and then, once you are logged in and the game has loaded its data:
 
-    [Info   :  ValeLoot] catalog ready: 412 equips
-    [Info   :  ValeLoot] wrote valeloot-items.txt (412 equips) to ...\BepInEx\config\valeloot-items.txt
+    [Info   :  ValeLoot] catalog ready: 647 equips, 327 cards, 129 gems, 31 consumables, 280 junk
+    [Info   :  ValeLoot] wrote valeloot-items.txt (1414 items) to ...\BepInEx\config\valeloot-items.txt
 
 and, once you are in the world:
 
@@ -221,7 +225,7 @@ it prints are whatever today's build uses. What matters is the shape:
 * "inventory paint ready" appeared. If it says "NOT ready", nothing will be highlighted.
 * "filter loaded" reports 0 error(s). Every error is printed on its own line with the line number in
   your filter file.
-* "catalog ready: N equips" appeared after you logged in. It cannot happen at startup, because the
+* "catalog ready: N equips, N cards, ..." appeared after you logged in. It cannot happen at startup, because the
   game has not loaded its data yet. Until it does, item names fall back to the text on the cell and
   "Stat Agi >= 3" rules match nothing. If you see "catalog unavailable: ..." instead, that line names
   the reason, and it is printed once rather than on every redraw.
@@ -311,7 +315,11 @@ Conditions (all optional, and all must hold for the block to match):
 
     Name Kunai              part of the item's name, its catalog id, or the text on the cell.
                             Case-insensitive.
+    Name "Buzzing Hive Fragment", "Abyssal Idol"
+                            comma-separated means ANY of them - one rule, one colour, one sound
     Type Accessory, Rifle   the item's type. Comma-separated means any of them.
+    Type Card, Gem, Consumable, Junk
+                            the kinds the game gives no type enum; ValeLoot names them
     Stat Agi >= 90%         that substat line rolled in the top 10% of its range
     Stat Agi >= 3           that substat PRINTS at least +3 on this item
     AnyStat                 one Stat line is enough (default: every Stat line must match)
@@ -411,6 +419,14 @@ A sound plays when the item is PICKED UP. The mod watches your character's own i
 game's frame tick, four times a second, so loot that lands while your bag is shut still makes its
 noise - and opening, scrolling or paging the panel makes none, because nothing was picked up. Ten
 things landing at once is one sound, not ten.
+
+EVERY BAG IS WATCHED - equipment, artifacts, cards, gems, consumables, cosmetics and junk. Nothing is
+excluded by kind, because the filter is what decides what deserves a noise: the lure called "Buzzing
+Hive Fragment" is a consumable and a boss summon, not a potion. A Show block with no conditions on it
+claims your whole bag and will chime at everything, and that is your choice to make.
+
+CARDS, JUNK AND CONSUMABLES STACK, so the bag holds one entry per item with the copies counted on it.
+A second copy of a card you already own is still a pickup, and still pings.
 
 The first look at a bag is silent: a bag you already own is not a pickup, so the first observation
 after you log in just takes note of what is in there. Switching character does the same, so a second

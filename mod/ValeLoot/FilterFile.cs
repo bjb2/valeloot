@@ -197,8 +197,10 @@ internal static class FilterFile
 # you never have to guess a spelling.
 #
 # Conditions              what it asks
-#   Name       Kunai      part of the item's name or its id
-#   Type       Dagger     the item's type; comma-separated means any of them
+#   Name       Kunai      part of the item's name or its id; comma-separated means any of them,
+#                         so Name ""Buzzing Hive Fragment"", ""Abyssal Idol"" is one rule for both
+#   Type       Dagger     the item's type; comma-separated means any of them.
+#                         Card, Gem, Consumable and Junk claim whole kinds at once
 #   TopRolls   >= 2       how many lines rolled at or above Threshold, below
 #   AvgRoll    < 35       average roll quality across its lines, in percent
 #   Stat       Agi >= 90% that stat's line rolled in the top tenth of its range

@@ -73,8 +73,14 @@ export interface LootCondition {
   minSharedStats?: number;
   /** Only items the site's catalog does not know (or only ones it does). */
   unknown?: boolean;
-  /** Case-insensitive substring of the item name. */
-  nameContains?: string;
+  /**
+   * Any of these, as a case-insensitive substring of the item name.
+   *
+   * A list rather than one string because the commonest real rule is "these few drops I care
+   * about", and the alternative is several rules differing in one word. `Type` already reads as a
+   * list for the same reason.
+   */
+  names?: string[];
   /** Only items whose upgrade comparison reached one of these verdicts. */
   verdicts?: Verdict[];
   /** Only items with a chaos substat (or only ones without). */
@@ -261,9 +267,9 @@ export function matchesCondition(item: OwnedGear, when: LootCondition, context: 
   // An unplaceable average must not slip through a "junk" ceiling — treat it as unknown, not as 0.
   if (when.maxAvgRoll !== undefined && (item.avgRoll === null || item.avgRoll > when.maxAvgRoll)) return false;
 
-  if (when.nameContains) {
-    const needle = when.nameContains.toLowerCase();
-    if (!item.name.toLowerCase().includes(needle)) return false;
+  if (when.names?.length) {
+    const name = item.name.toLowerCase();
+    if (!when.names.some((want) => name.includes(want.toLowerCase()))) return false;
   }
 
   if (when.hasChaos !== undefined) {
@@ -374,7 +380,18 @@ function normalizeCondition(input: unknown): LootCondition {
   if (typeof raw.unknown === 'boolean') when.unknown = raw.unknown;
   if (typeof raw.hasChaos === 'boolean') when.hasChaos = raw.hasChaos;
   if (typeof raw.favorite === 'boolean') when.favorite = raw.favorite;
-  if (typeof raw.nameContains === 'string' && raw.nameContains) when.nameContains = raw.nameContains.slice(0, 40);
+  // Both spellings are read, because rules are hand-editable JSON that may predate the list form.
+  // `nameContains` is no longer on the type, so it is reached through the untyped input — that is
+  // the point of a migration read. Only the list is ever written back out, so a file round-trips
+  // into the current shape once.
+  const legacy = (input ?? {}) as { nameContains?: unknown };
+  const names = Array.isArray(raw.names)
+    ? raw.names
+    : typeof legacy.nameContains === 'string' && legacy.nameContains ? [legacy.nameContains] : [];
+  const cleaned = names
+    .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    .map((entry) => entry.slice(0, 40));
+  if (cleaned.length) when.names = cleaned;
   if (raw.statMode === 'any' || raw.statMode === 'all') when.statMode = raw.statMode;
   if (Array.isArray(raw.stats)) {
     when.stats = raw.stats

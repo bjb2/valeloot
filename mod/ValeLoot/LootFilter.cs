@@ -158,7 +158,16 @@ internal static class LootFilter
     internal sealed class LootCondition
     {
         public string[]? Types;
-        public string? NameContains;
+        /**
+         * Any of these, as a case-insensitive substring of the name, the id or the catalog's name.
+         *
+         * A LIST rather than one string because the commonest real rule is "these four drops I care
+         * about", and the alternative is four `Show` blocks that differ only in one word — four
+         * places to change the colour, and four chances to get the order wrong. `Type` already reads
+         * as a list for the same reason, so `Name "Buzzing Hive Fragment", "Abyssal Idol"` is the
+         * spelling a player would guess.
+         */
+        public string[]? Names;
         public int? MinRefine;
         public int? MinTopRolls;
         public int? MaxTopRolls;
@@ -173,7 +182,7 @@ internal static class LootFilter
         public bool? OverRoll;
 
         public bool IsEmpty =>
-            Types is null && NameContains is null && MinRefine is null
+            Types is null && Names is null && MinRefine is null
             && MinTopRolls is null && MaxTopRolls is null && MinAvgRoll is null && MaxAvgRoll is null
             && (Stats is null || Stats.Length == 0)
             && HasChaos is null && Favorite is null && OverRoll is null;
@@ -295,15 +304,29 @@ internal static class LootFilter
         // Matched against the DISPLAYED name, the catalog id, and the config's own display name.
         // Players think in display names ("Kunai"), filters shared from elsewhere may carry ids, and
         // asking which one a given string is would make the commonest line in any filter the one that
-        // needs explaining. The config name is the third because a cell truncates its text to fit,
-        // and a name a player copied out of valeloot-items.txt has to match the item it names.
-        if (when.NameContains is not null)
+        // needs explaining. The config name is the third because a cell truncates its text to fit, a
+        // pickup has no cell at all, and several kinds of item have an id nothing like their name —
+        // "Buzzing Hive Fragment" is `Lure Sting`.
+        //
+        // ANY of the listed names is enough. Every one of them asks the same three questions, so a
+        // list is exactly as strong as the `Show` blocks it replaces.
+        if (when.Names is not null)
         {
             string catalogName = ItemCatalog.DisplayName(item.Id) ?? "";
-            if (item.Name.IndexOf(when.NameContains, StringComparison.OrdinalIgnoreCase) < 0
-                && item.Id.IndexOf(when.NameContains, StringComparison.OrdinalIgnoreCase) < 0
-                && (catalogName.Length == 0
-                    || catalogName.IndexOf(when.NameContains, StringComparison.OrdinalIgnoreCase) < 0)) return false;
+            bool named = false;
+            for (int i = 0; i < when.Names.Length; i++)
+            {
+                string want = when.Names[i];
+                if (item.Name.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0
+                    || item.Id.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0
+                    || (catalogName.Length > 0
+                        && catalogName.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    named = true;
+                    break;
+                }
+            }
+            if (!named) return false;
         }
 
         if (when.MinRefine is int minRefine && item.Refine < minRefine) return false;
