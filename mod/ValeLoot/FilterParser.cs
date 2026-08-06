@@ -505,18 +505,8 @@ internal static class FilterParser
         };
     }
 
-    private static bool IsPlainName(string value)
-    {
-        if (value.Length == 0 || value.Length > 40) return false;
-        char first = value[0];
-        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9'))) return false;
-        for (int i = 1; i < value.Length; i++)
-        {
-            char c = value[i];
-            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-                   || c == '.' || c == '-' || c == '_';
-            if (!ok) return false;
-        }
-        return true;
-    }
+    /// <summary>The sounds directory owns this rule — see <see cref="LootSound.IsPlainName"/>. It is
+    /// applied HERE as well so a bad name is a load-time error with a line number, rather than a rule
+    /// that parses fine and is silent for ever.</summary>
+    private static bool IsPlainName(string value) => LootSound.IsPlainName(value);
 }

@@ -1101,7 +1101,7 @@ const SNAPSHOT_BLIND = {
  * and what it falls back to. Decided once by `probeServed`, never inferred from the url.
  */
 let mode = 'file';
-let served = { port: null, version: null, coverage: null, catalogReady: true, lost: false };
+let served = { port: null, version: null, coverage: null, catalogReady: true, lost: false, sounds: null };
 /**
  * Why Save is unavailable, when the reason is not the filter's own errors.
  *
@@ -1716,13 +1716,20 @@ function ruleRow(block, index) {
       + (sound ? '<button class="btn tiny" data-audition="' + esc(sound) + '" title="hear it">\u25b6</button>' : '')
       + '</div>';
     if (openPicker === 'sound') {
+      // Whatever is IN the folder when the mod is serving, and the five synthesised names otherwise.
+      // A player who dropped a pack in there sees it here rather than having to remember what they
+      // called the files — and `chime` appearing means chime.wav exists, whoever put it there.
+      const options = soundOptions();
       html += '<div class="popout"><div class="snds">'
         + '<button class="' + (sound ? '' : 'on') + '" data-sound="">silent</button>'
-        + VL.BUILTIN_LOOT_SOUNDS.map((name) => '<button class="' + (name === sound ? 'on' : '') + '"'
-          + ' data-sound="' + name + '">' + name + '</button>').join('')
-        + '<label class="own">or a .wav of your own in BepInEx/config/valeloot-sounds/'
+        + options.map((name) => '<button class="' + (name === sound ? 'on' : '') + '"'
+          + ' data-sound="' + esc(name) + '">' + esc(name) + '</button>').join('')
+        + '<label class="own">'
+        + (served.sounds
+            ? 'drop a .wav in BepInEx/config/valeloot-sounds/ and it appears here'
+            : 'or a .wav of your own in BepInEx/config/valeloot-sounds/')
         + '<input id="ownsound" placeholder="my-sound.wav" value="'
-        + (sound && !VL.BUILTIN_LOOT_SOUNDS.includes(sound) ? esc(sound) : '') + '"></label>'
+        + (sound && !options.includes(sound) ? esc(sound) : '') + '"></label>'
         + '</div></div>';
     }
   }
@@ -2055,7 +2062,12 @@ function candidates(context) {
   if (context.kind === 'cond') return CONDITIONS.filter(([w]) => hit(w)).map(([w, h]) => ({ text: w, help: h }));
   if (context.kind === 'level') return LEVELS.filter(([w]) => hit(w)).map(([w, h]) => ({ text: w, help: h }));
   if (context.kind === 'sound') {
-    return VL.BUILTIN_LOOT_SOUNDS.filter(hit).map((n) => ({ text: n, help: 'built in — click \u25b6 to hear it' }));
+    // Completing from the folder, so a name that completes is a name that will actually play.
+    // Offering a built-in the player deleted would autocomplete a rule into silence.
+    return soundOptions().filter(hit).map((n) => ({
+      text: n,
+      help: served.sounds ? 'in valeloot-sounds/ — click \u25b6 to hear it' : 'built in — click \u25b6 to hear it',
+    }));
   }
   if (context.kind === 'stat') return vocab.stats.filter(hit).slice(0, 60).map((s) => ({ text: s }));
   if (context.kind === 'type') return vocab.types.filter(hit).slice(0, 60).map((t) => ({ text: t }));
@@ -2133,11 +2145,46 @@ const SYNTH = {
   thud: (c, o, t) => { tone(c, o, t, 'sine', 160, 48, 0.22, 0.45); },
 };
 let audioCtx;
+let auditionEl;
+
+/**
+ * The names to offer: what the mod can see, or the five this page can synthesise.
+ *
+ * Served, the folder is the truth — including a `chime.wav` the player replaced with their own
+ * recording, which is still called `chime` and is no longer the tone in `SYNTH`. In file mode there
+ * is no folder to ask about, so the built-in names are the only honest answer.
+ */
+function soundOptions() {
+  return served.sounds ? served.sounds : VL.BUILTIN_LOOT_SOUNDS.slice();
+}
+
+/**
+ * Hear it.
+ *
+ * Served, this plays the ACTUAL FILE the mod would play, streamed from `/api/sound` — so a custom
+ * `.wav` auditions like anything else, and a built-in the player overwrote auditions as what it now
+ * is rather than as the tone this page would have synthesised. That last part is the reason the
+ * served branch comes first: a synthesised `chime` that no longer matches `chime.wav` is a button
+ * that lies quietly.
+ *
+ * Opened as a file there is no server, so the five synthesised tones are all that is reachable, and
+ * anything else says so plainly rather than doing nothing.
+ */
 function audition(name) {
+  if (served.sounds && served.sounds.includes(name)) {
+    // One element, reused: a click-happy player should replace the note, not layer eight of them.
+    if (!auditionEl) auditionEl = new Audio();
+    auditionEl.pause();
+    auditionEl.src = 'api/sound?name=' + encodeURIComponent(name);
+    auditionEl.currentTime = 0;
+    auditionEl.play().catch((e) => say('could not play "' + name + '" — ' + e.message, true));
+    return;
+  }
+
   const synth = SYNTH[name];
   if (!synth) {
-    say('"' + name + '" is one of your own files — ValeLoot plays it from BepInEx/config/valeloot-sounds/, '
-      + 'and this page cannot reach in there to audition it.');
+    say('"' + name + '" is one of your own files — ValeLoot plays it from BepInEx/config/valeloot-sounds/. '
+      + 'Open this editor with F8 in game and the \u25b6 button plays the real file.');
     return;
   }
   if (audioCtx === undefined) {
@@ -2408,6 +2455,9 @@ function applyState(state, keepText) {
   served.lost = false;
   const catalog = state.catalog || {};
   served.catalogReady = catalog.ready !== false;
+  // The .wav files the mod can actually see. Null in file mode, where this page has no way to look
+  // in the folder and the five synthesised built-ins are the honest best guess.
+  served.sounds = Array.isArray(state.sounds) && state.sounds.length ? state.sounds.slice() : null;
   // Only ever from a real string, and adopted when the buffer is not yet the player's: `keepText` is
   // the re-read case, but a HELD save means no read has ever supplied the rules, so this one may.
   let released = false;

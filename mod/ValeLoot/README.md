@@ -403,6 +403,18 @@ into `BepInEx/config/valeloot-sounds/` on first run. Overwrite any of them with 
 filter line does not change; your file is never overwritten by an upgrade. Drop in
 `BepInEx/config/valeloot-sounds/anything.wav` and write `Sound anything`.
 
+**The folder is the list.** Whatever `.wav` files are in there are what the editor offers you: drop
+`poe-insane.wav` in and it appears in the sound picker within a couple of seconds, no restart, and
+the ▶ button plays that actual file over the same loopback port the editor came from. Names must be
+letters, digits, dot, dash and underscore — a file called `my sound.wav` cannot be written in a rule
+line, so it is left out of the list rather than offered as a rule that would never fire.
+
+**ValeLoot ships no audio beyond the five synthesised tones**, deliberately: bundling somebody
+else's sounds means redistributing work this repository cannot license. Packs exist — one doing the
+rounds is [Path of Exile-style drops for RuneLite (sounds)](https://www.reddit.com/r/2007scape/comments/1mk6dv8/path_of_exilestyle_drops_for_runelite_sounds/)
+— and a pack is just `.wav` files, so it drops straight into `valeloot-sounds/`. What you may do
+with one is between you and whoever made it.
+
 A sound plays when the item is **picked up**. The mod watches your character's own inventory data on
 the game's frame tick, four times a second, so loot that lands while your bag is shut still makes its
 noise — and opening, scrolling or paging the panel makes none, because nothing was picked up. Ten

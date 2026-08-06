@@ -229,6 +229,17 @@ Sounds are ordinary `.wav` files in `BepInEx/config/valeloot-sounds/`. Five are 
 fresh install has something to play; overwrite `chime.wav` with anything you like and your rules do not
 change.
 
+**Anything you drop in that folder becomes an option.** Put `poe-insane.wav` there and write
+`Sound poe-insane`; the editor's sound picker lists it the moment it appears, and the ▶ button plays the
+real file rather than an approximation. No restart, and nothing to register anywhere.
+
+ValeLoot ships no audio beyond those five synthesised tones, on purpose — it would mean redistributing
+somebody else's work in a repository that cannot license it. If you want the loud, tiered
+Path-of-Exile-style alerts, people share packs for exactly this; one doing the rounds is
+[Path of Exile-style drops for RuneLite (sounds)](https://www.reddit.com/r/2007scape/comments/1mk6dv8/path_of_exilestyle_drops_for_runelite_sounds/).
+Drop the `.wav` files in `valeloot-sounds/` and name them in your rules. Check what you are allowed to do
+with any pack you download; that is between you and whoever made it.
+
 ## Good to know
 
 - **Every bag makes noise.** Equipment, artifacts, cards, gems, consumables, cosmetics and junk all ping

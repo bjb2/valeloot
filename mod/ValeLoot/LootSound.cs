@@ -56,10 +56,25 @@ internal static class LootSound
     /// <summary>Silence between sounds. A stack of loot landing at once should ping once, not forty times.</summary>
     private const int MinIntervalMs = 250;
 
+    /**
+     * How long a directory listing is trusted before it is taken again.
+     *
+     * The editor asks for the list on every state poll, and a player who drops a `.wav` in while the
+     * game is running expects to see it without a restart. Two seconds is under the threshold where
+     * anyone would call it stale, and it keeps a poll loop from stat-ing the directory on every
+     * request. This is filesystem work on the HTTP thread — no il2cpp is touched, which is what makes
+     * it safe to do off the main thread at all.
+     */
+    private const int RescanMs = 2000;
+
     private static string _directory = "";
     private static Action<string> _log = _ => { };
     private static bool _available;
     private static long _lastPlayTicks;
+
+    /// <summary>Last directory listing. Replaced wholesale, never mutated, so a reader sees one or the other.</summary>
+    private static volatile string[] _names = Array.Empty<string>();
+    private static long _namesStamp;
 
     public static bool Enabled = true;
     public static long Played;
@@ -70,6 +85,92 @@ internal static class LootSound
     public static string LastUid = "";
 
     public static string Directory => _directory;
+
+    /**
+     * Every sound a filter could name right now: the `.wav` files actually in the directory, without
+     * their extension, sorted.
+     *
+     * This is what makes "custom sounds" a list rather than a blind text field. The built-ins have no
+     * special status in it — they are five files like any other, and a player who overwrote
+     * `chime.wav` with their own recording sees `chime` here because that is what will play.
+     *
+     * A file whose name a filter line could not carry is left OUT. `my sound.wav` cannot be written
+     * as `Sound my sound`, so offering it in a picker would hand the player a rule that silently
+     * never fires — see <see cref="IsPlainName"/>, which is the same rule the parser applies.
+     */
+    public static string[] Names()
+    {
+        if (!_available || _directory.Length == 0) return Array.Empty<string>();
+
+        long now = DateTime.UtcNow.Ticks;
+        if ((now - _namesStamp) / TimeSpan.TicksPerMillisecond < RescanMs) return _names;
+        _namesStamp = now;
+
+        try
+        {
+            string[] files = System.IO.Directory.GetFiles(_directory, "*.wav");
+            var found = new List<string>(files.Length);
+            foreach (string file in files)
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                if (name.Length > 0 && IsPlainName(name)) found.Add(name);
+            }
+            found.Sort(StringComparer.OrdinalIgnoreCase);
+            _names = found.ToArray();
+        }
+        catch (Exception e)
+        {
+            // The last good list stands. A directory that briefly cannot be read should not empty a
+            // picker the player is looking at, and it certainly must not stop anything from PLAYING —
+            // `Play` resolves by path and never consults this.
+            _log($"sounds: could not list {_directory} — {e.Message}. Showing the last list read.");
+        }
+        return _names;
+    }
+
+    /**
+     * A sound name -> the file it means, or false.
+     *
+     * The ONE place a name becomes a path. `Play` and the editor's audition route both come through
+     * here, so a name the mod will play and a name the editor will let you hear cannot diverge, and
+     * the traversal check cannot be present in one caller and missing in the other.
+     */
+    public static bool TryResolve(string name, out string path)
+    {
+        path = "";
+        if (_directory.Length == 0 || !IsPlainName(name)) return false;
+        string candidate = Path.Combine(_directory, name + ".wav");
+        if (!File.Exists(candidate)) return false;
+        path = candidate;
+        return true;
+    }
+
+    /**
+     * A name that is safe to resolve as a file INSIDE the sounds directory.
+     *
+     * The whole defence, and deliberately the only copy: a name that could be `../../something` would
+     * turn a filter file — and the editor's audition route, which takes one straight off the wire —
+     * into a way to reach the rest of the disk. No separators, no colon, and the first character must
+     * be alphanumeric, so `..` cannot even begin. The `.wav` this file appends means a name cannot
+     * choose its own extension either.
+     *
+     * <see cref="FilterParser"/> applies this to a `Sound` line so a bad name is a load-time error
+     * with a line number rather than silence at pickup time.
+     */
+    public static bool IsPlainName(string value)
+    {
+        if (value.Length == 0 || value.Length > 40) return false;
+        char first = value[0];
+        if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') || (first >= '0' && first <= '9'))) return false;
+        for (int i = 1; i < value.Length; i++)
+        {
+            char c = value[i];
+            bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                   || c == '.' || c == '-' || c == '_';
+            if (!ok) return false;
+        }
+        return true;
+    }
 
     /// <summary>Create the sounds directory, write the built-ins if missing, and check winmm answers.</summary>
     public static void Install(string configDirectory, Action<string> log)
@@ -126,11 +227,11 @@ internal static class LootSound
         if ((now - _lastPlayTicks) / TimeSpan.TicksPerMillisecond < MinIntervalMs) { Suppressed++; return; }
         _lastPlayTicks = now;
 
-        string path = Path.Combine(_directory, name + ".wav");
-        if (!File.Exists(path))
+        if (!TryResolve(name, out string path))
         {
-            // Named in a filter but absent from disk. Logged once per name would need another set to
-            // track; the count in `status` is enough, and the load summary already lists the names.
+            // Named in a filter but absent from disk, or a name no file could have. Logging once per
+            // name would need another set to track; the count in `status` is enough, and the load
+            // summary already lists the names a filter asked for.
             Suppressed++;
             return;
         }

@@ -429,6 +429,45 @@ internal static class EditorServer
                 SendState(context);
                 return;
 
+            /**
+             * One `.wav` out of the sounds directory, so the editor's ▶ plays the REAL file.
+             *
+             * The page used to synthesise the five built-ins in WebAudio and tell you it could not
+             * reach anything else — which meant the moment a player used their own file, the one
+             * button whose entire job is "let me hear it" stopped working. It can reach it now,
+             * through the mod that is already serving the page.
+             *
+             * `name` goes through `LootSound.TryResolve`, the same call `Play` uses, so this route
+             * can serve exactly the set of files a filter could name and not one byte more. There is
+             * no path here to join and no extension to choose: a name is letters, digits, dot, dash
+             * and underscore, must start alphanumeric, and `.wav` is appended by the resolver.
+             */
+            case "/api/sound":
+            {
+                if (method != "GET" && method != "HEAD") { MethodNotAllowed(context, "GET"); return; }
+                string wanted = request.QueryString["name"] ?? "";
+                if (!LootSound.TryResolve(wanted, out string soundPath))
+                {
+                    TrySend(context, 404, "application/json",
+                            Fail("no such sound in the valeloot-sounds folder."));
+                    return;
+                }
+                byte[] audio;
+                try
+                {
+                    audio = File.ReadAllBytes(soundPath);
+                }
+                catch (Exception e)
+                {
+                    // A file being rewritten as the page asks for it. Says so rather than 500-ing:
+                    // the audition is a convenience and the mod will still play it at pickup time.
+                    TrySend(context, 503, "application/json", Fail($"could not read that sound — {e.Message}"));
+                    return;
+                }
+                Send(context, 200, "audio/wav", audio, method == "HEAD");
+                return;
+            }
+
             case "/api/filter":
                 if (method != "POST") { MethodNotAllowed(context, "POST"); return; }
                 SaveFilter(context);
@@ -436,7 +475,7 @@ internal static class EditorServer
 
             default:
                 TrySend(context, 404, "application/json",
-                        Fail($"ValeLoot's editor serves /, /api/state, /api/filter and /api/health. No {route}."));
+                        Fail($"ValeLoot's editor serves /, /api/state, /api/filter, /api/sound and /api/health. No {route}."));
                 return;
         }
     }
@@ -540,6 +579,23 @@ internal static class EditorServer
             .Append(",\"lastUid\":");
         Str(json, LootSound.LastUid ?? "");
         json.Append('}');
+
+        /**
+         * The sounds actually on disk, so the editor offers a LIST instead of a text field.
+         *
+         * Read here rather than captured in the main-thread snapshot on purpose: it is a directory
+         * listing, touching no il2cpp, and it has to reflect a `.wav` the player dropped in a moment
+         * ago rather than whatever was there when the last frame ticked. `LootSound.Names` throttles
+         * the scan, so a page polling this does not stat the folder on every request.
+         */
+        json.Append(",\"sounds\":[");
+        string[] sounds = LootSound.Names();
+        for (int i = 0; i < sounds.Length; i++)
+        {
+            if (i > 0) json.Append(',');
+            Str(json, sounds[i]);
+        }
+        json.Append(']');
 
         json.Append(",\"items\":[");
         for (int i = 0; i < snap.Items.Length; i++)
