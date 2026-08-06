@@ -1,13 +1,27 @@
 /*
- * VENDORED. Copied from the private project this filter language was written for, where the
- * canonical copy lives beside the rest of that project's bridge modules. It is here because the rule
+ * VENDORED, AND NOW DIVERGED. DO NOT OVERWRITE FROM THE ORIGINAL.
+ *
+ * Copied from the private project this filter language was written for. It is here because the rule
  * editor in `tools/valeloot-editor/` compiles the REAL parser into its page rather than a lookalike:
  * a third implementation of this grammar (after this one and the mod's C# in
  * `mod/ValeLoot/FilterParser.cs`) would turn every grammar change into a three-way merge. Both
  * copies are MIT and ours.
  *
- * Changed from the original: the sibling `import type`s now come from `./types.ts` (see that file).
- * Nothing executable was touched — fix bugs in the canonical copy and re-copy, do not diverge here.
+ * ## What has changed here, and why re-copying would be a regression
+ *
+ * This copy is no longer the original, and the differences are deliberate. In ValeLoot the mod is
+ * AUTHORITATIVE — it decides what the player's bag actually looks like — and this parser's only job
+ * is to predict it. Where the two read a line differently, this one is wrong by definition.
+ *
+ *   - `Name` takes a comma-separated list, any one matching.
+ *   - `Stat X > 7` excludes 7 (the original folded `>` into `>=`).
+ *   - `AvgRoll` bounds are integral, because the mod compares whole percents.
+ *
+ * The sibling `import type`s also come from `./types.ts` (see that file).
+ *
+ * `tools/conformance` parses a corpus with BOTH implementations and fails the build if they
+ * disagree, so a careless re-sync is caught rather than shipped. It found the last two of those
+ * three the day it was written.
  */
 /**
  * The loot filter language — a PoE-style block filter you paste in.
@@ -311,16 +325,29 @@ function parseRuleBlock(block: Block, index: number): { rule: LootRule; errors: 
           errors.push({ line, text, message: 'Stat supports only >= and > (a maximum on one line is not a filter anyone wants yet)' });
           break;
         }
-        // `>` on a stat is treated as `>=` for the same reason as AvgRoll: the model stores an
-        // inclusive minimum and substat values do not have meaningful sub-unit precision.
-        const value = Number(rawValue);
+        /**
+         * `>` EXCLUDES the value. It used to be folded into `>=`, which quietly made `Stat Crit > 7`
+         * claim an item with exactly 7 — in the editor only, because the mod reads the same line as
+         * `>= 8`. A preview that includes an item the game excludes is worse than no preview.
+         *
+         * Both sides compare whole numbers: a roll is a whole percentage and the game prints a whole
+         * value, so `> 7` is exactly `>= 8` and no precision is lost by saying so. This mirrors
+         * `FilterParser.ParseBlock`, which computes the same bound with floor/ceil.
+         */
+        const raw = Number(rawValue);
+        const value = op === '>' ? Math.floor(raw) + 1 : Math.ceil(raw);
         stats.push(percent ? { stat: stat!, minRollPct: value } : { stat: stat!, minValue: value });
         break;
       }
       case 'anystat': when.statMode = 'any'; break;
       case 'allstats': when.statMode = 'all'; break;
       case 'avgroll':
-        bound(text, line, remainder, false, (min, max) => {
+        // INTEGRAL, because the mod compares whole percents. `LootFilter.ItemFacts.AverageRoll`
+        // rounds the mean to a whole number, so in game `AvgRoll < 35` excludes an item averaging
+        // 34.6 (it rounds to 35). This parser used to store `34.999999999` and claim it. Whichever
+        // reading is nicer in the abstract, the editor's whole job is to predict the mod, and an
+        // edge case where the preview lights a cell the game leaves dark is just a wrong preview.
+        bound(text, line, remainder, true, (min, max) => {
           if (min !== undefined) when.minAvgRoll = min;
           if (max !== undefined) when.maxAvgRoll = max;
         });

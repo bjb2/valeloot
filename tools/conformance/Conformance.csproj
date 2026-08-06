@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The MOD's parser, run outside the game.
+
+    This exists so the filter language has one executable definition per implementation and a way to
+    prove they agree. See `run.ts` next to this file.
+
+    The parser sources are LINKED, not referenced. A project reference would pull in the BepInEx
+    assemblies and the whole plugin, and `FilterParser` is `internal` besides; linking the three
+    files it actually needs keeps this a plain console app that builds on any machine with the .NET
+    SDK and nothing else. It also means there is no second copy of the parser to drift — these ARE
+    the shipped files.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ValeLoot.Conformance</RootNamespace>
+    <AssemblyName>Conformance</AssemblyName>
+    <!--
+      CS1574: the linked files carry `<see cref="..."/>` to plugin types that are not compiled here.
+      They are doc comments on the real files and must stay there; they mean nothing to this harness.
+    -->
+    <NoWarn>$(NoWarn);CS1574</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../mod/ValeLoot/LootFilter.cs" Link="linked/LootFilter.cs" />
+    <Compile Include="../../mod/ValeLoot/FilterParser.cs" Link="linked/FilterParser.cs" />
+    <Compile Include="../../mod/ValeLoot/LootSound.cs" Link="linked/LootSound.cs" />
+  </ItemGroup>
+
+</Project>

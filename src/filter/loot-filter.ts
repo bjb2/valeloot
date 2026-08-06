@@ -1,13 +1,18 @@
 /*
- * VENDORED. Copied from the private project this filter language was written for, where the
- * canonical copy lives beside the rest of that project's bridge modules. It is here because the rule
+ * VENDORED, AND NOW DIVERGED. DO NOT OVERWRITE FROM THE ORIGINAL.
+ *
+ * Copied from the private project this filter language was written for. It is here because the rule
  * editor in `tools/valeloot-editor/` compiles the REAL matcher into its page rather than a lookalike:
  * a second implementation of these semantics would make the editor agree with the mod only by
  * coincidence. Both copies are MIT and ours.
  *
- * Changed from the original: the sibling `import type`s now come from `./types.ts` (see that file),
- * and one citation of an unpublished design document was dropped. Nothing executable was touched —
- * fix bugs in the canonical copy and re-copy, do not diverge here.
+ * Changed here on purpose: `LootCondition.nameContains` (one string) became `names` (a list, any one
+ * matching), with a migration read for stored rules that predate it. The sibling `import type`s come
+ * from `./types.ts`, and one citation of an unpublished design document was dropped.
+ *
+ * In ValeLoot the MOD is authoritative — it decides what the bag actually looks like, and this only
+ * predicts it — so a difference between the two is this file's bug, not the mod's. `tools/conformance`
+ * fails the build when they disagree; see the header of `loot-dsl.ts`.
  */
 /**
  * Loot filters — your rules, your colours, your sounds.

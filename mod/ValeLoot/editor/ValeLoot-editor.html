@@ -815,7 +815,8 @@ function parseRuleBlock(block, index) {
           errors.push({ line, text, message: "Stat supports only >= and > (a maximum on one line is not a filter anyone wants yet)" });
           break;
         }
-        const value = Number(rawValue);
+        const raw = Number(rawValue);
+        const value = op === ">" ? Math.floor(raw) + 1 : Math.ceil(raw);
         stats.push(percent ? { stat, minRollPct: value } : { stat, minValue: value });
         break;
       }
@@ -826,7 +827,7 @@ function parseRuleBlock(block, index) {
         when.statMode = "all";
         break;
       case "avgroll":
-        bound(text, line, remainder, false, (min, max) => {
+        bound(text, line, remainder, true, (min, max) => {
           if (min !== undefined)
             when.minAvgRoll = min;
           if (max !== undefined)

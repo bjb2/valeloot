@@ -1,0 +1,31 @@
+# Every block here is WRONG, and both parsers must reject the same LINES.
+#
+# Only line numbers are compared, never message text: the two implementations word their errors for
+# their own audience and always will. What must not differ is WHICH lines are refused, because a
+# block rejected by one parser and accepted by the other means the editor shows a bag the mod does
+# not paint.
+
+Show "sound name that could escape the folder"
+    Sound     ../../evil
+    Color     #4ade80
+
+Show "unknown condition"
+    Sparkliness >= 4
+    Color     #4ade80
+
+Show "stat with no bound"
+    Stat      Agi
+    Color     #4ade80
+
+Show "stat with a maximum, which is not supported"
+    Stat      Agi <= 40
+    Color     #4ade80
+
+Hide "a Hide block cannot decorate"
+    AvgRoll   < 20
+    Highlight glow
+    Sound     chime
+
+Show "name with no value"
+    Name
+    Color     #4ade80

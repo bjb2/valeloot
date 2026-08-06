@@ -1,0 +1,24 @@
+# Every decoration, on a Show block. The colour is lower-cased by one parser and not the other if
+# anybody is careless, so it is here with mixed case on purpose.
+Threshold 95
+
+Show "loud one"
+    TopRolls  >= 2
+    Color     #E9C46A
+    Tag       TOP2
+    Highlight glow
+    Sound     chime
+
+Show "quiet one"
+    Refine    >= 5
+    Color     #4ade80
+    Tag       "+5"
+    Highlight dot
+
+Show "no highlight line at all"
+    Favorite
+    Color     #facc15
+
+Hide "claimed and silent"
+    AvgRoll   < 35
+    TopRolls  < 1

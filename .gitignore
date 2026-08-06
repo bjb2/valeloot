@@ -10,3 +10,7 @@ node_modules/
 # missing. A repository that carries it is a repository that ships a redistribution nobody reviewed
 # in every clone, so it stays out and the build target says exactly where to put it.
 tools/BepInEx-IL2CPP-be785.zip
+
+# The conformance harness is a console app; its build output is not an artifact.
+tools/conformance/bin/
+tools/conformance/obj/

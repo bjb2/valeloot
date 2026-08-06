@@ -60,6 +60,15 @@ jobs:
             --moduleResolution bundler --allowImportingTsExtensions \
             src/filter/loot-dsl.ts src/filter/loot-filter.ts
 
+      # The language has two implementations — the mod's C# parser, which decides what your bag
+      # actually looks like, and the editor's TypeScript one, which tells you what it will look
+      # like. Nothing kept them honest until this ran, and its first run found two real
+      # divergences: `Stat Crit > 7` included 7 in the editor and excluded it in game, and
+      # `AvgRoll < 35` disagreed about an item averaging 34.6. Both were invisible — no error, no
+      # log line, just a preview that lied.
+      - name: Filter language conformance
+        run: bun tools/conformance/run.ts
+
       - name: Build the plugin
         run: dotnet build mod/ValeLoot/ValeLoot.csproj -c Release
 

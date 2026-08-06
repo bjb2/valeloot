@@ -1,0 +1,36 @@
+# Per-item overrides and every numeric bound, including the ones that come in pairs.
+
+AlwaysShow "Spirit Ward", "Windborne Rune"
+AlwaysHide "Rusty Dagger"
+AlwaysShow Kunai
+
+Show "both roll bounds"
+    TopRolls  >= 2
+    TopRolls  < 4
+    Color     #4ade80
+
+Show "both average bounds"
+    AvgRoll   >= 40
+    AvgRoll   < 80
+    Color     #4ade80
+
+Show "refine"
+    Refine    >= 5
+    Color     #ff9f6b
+
+Show "everything at once"
+    Name      "Vampiric Fang Clip", Kunai
+    Type      Dagger, Card
+    Stat      Agi >= 90%
+    Stat      Crit >= 8
+    AnyStat
+    TopRolls  >= 1
+    AvgRoll   >= 30
+    Refine    >= 3
+    Favorite
+    Chaos
+    OverRoll
+    Color     #e9c46a
+    Tag       ALL
+    Highlight mark
+    Sound     poe-insane

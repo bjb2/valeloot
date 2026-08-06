@@ -1,0 +1,48 @@
+# Type lists, the kind names ValeLoot invents, and both Stat forms.
+#
+# The `%` is the whole point of the Stat pair: with it the bound is roll QUALITY, without it the
+# value the game PRINTS. A parser that set the wrong field would grade every item wrong while
+# looking correct, so both forms are here, including the `>` spelling that normalises to `>=`.
+
+Show "weapon types"
+    Type      Dagger, Katar, Twinblade
+    Color     #c4a5ff
+
+Show "the kinds with no type enum"
+    Type      Card, Gem, Consumable, Junk
+    Color     #7dd3fc
+
+Show "roll quality"
+    Stat      Agi >= 90%
+    Color     #4ade80
+
+Show "printed value"
+    Stat      Agi >= 3
+    Color     #4ade80
+
+Show "strict becomes inclusive"
+    Stat      Crit > 7
+    Color     #f472b6
+
+Show "several stats, all must hold"
+    Stat      Agi >= 90%
+    Stat      Crit >= 8
+    Color     #f472b6
+
+Show "several stats, any will do"
+    Stat      Agi >= 90%
+    Stat      Dex >= 90%
+    AnyStat
+    Color     #f472b6
+
+Show "the flags"
+    OverRoll
+    Chaos
+    Favorite
+    Color     #ef6f6f
+
+Show "the negative flags"
+    NoOverRoll
+    NoChaos
+    NotFavorite
+    Color     #888888

@@ -1,0 +1,30 @@
+# The change that motivated this corpus. `Name` takes a comma-separated list, any one matching.
+#
+# A parser that still reads Name as a single string produces ONE name spelled `"Buzzing Hive
+# Fragment", "Abyssal Idol"` and matches nothing, silently. That is the exact drift this file exists
+# to catch, so every spelling is here: quoted list, bare list, single quoted, single bare, and a bare
+# multi-word name that must stay ONE name because only a comma separates.
+
+Show "two quoted names"
+    Name      "Buzzing Hive Fragment", "Abyssal Idol"
+    Color     #f97316
+
+Show "bare list"
+    Name      Kunai, Katar
+    Color     #c4a5ff
+
+Show "single quoted"
+    Name      "Vampiric Fang Clip"
+    Color     #4ade80
+
+Show "single bare"
+    Name      Kunai
+    Color     #4ade80
+
+Show "bare multi word is one name"
+    Name      Vampiric Fang Clip
+    Color     #4ade80
+
+Show "ragged spacing around commas"
+    Name      "Amber Bow" ,Kunai,   "Azure Prism"
+    Color     #4ade80
