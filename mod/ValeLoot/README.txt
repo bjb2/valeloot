@@ -119,8 +119,19 @@ want.
 ValeLoot-0.1.0-with-BepInEx.zip - TAKE THIS ONE
 
   1. Unzip it into your SpiritVale folder - the folder holding SpiritVale.exe.
-  2. Start the game.
+  2. Start the game. THE FIRST START TAKES A FEW MINUTES - see below.
   3. Press F8.
+
+THE FIRST LAUNCH IS SLOW, AND THAT IS NORMAL
+
+Before any mod can read the game, BepInEx unpacks it once, writing a few hundred files into
+BepInEx/interop/. That takes a few minutes the first time you start the game after installing. The
+window may sit black, or look hung, or Windows may grey it out and say "not responding". Leave it
+alone. It happens once; every later launch is normal speed.
+
+This is the likeliest reason to believe ValeLoot is broken when it is not, because closing the game
+during that first unpack leaves nothing loaded and looks exactly like a failed install. If you want
+reassurance while you wait: BepInEx/LogOutput.log keeps growing, and BepInEx/interop/ fills with files.
 
 That is the whole install. The zip carries BepInEx 6 IL2CPP with it, so there is nothing to install
 first and no chance of installing the wrong one - which is the commonest way to fail at installing

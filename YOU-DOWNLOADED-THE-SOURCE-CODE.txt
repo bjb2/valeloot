@@ -20,7 +20,10 @@ Then:
   3. When it is right, SpiritVale.exe, winhttp.dll and a BepInEx folder are all sitting side by side.
      If instead you see a single folder like "ValeLoot-0.1.0-with-BepInEx", unzip went one level too
      deep: move everything out of that folder so it sits next to SpiritVale.exe, then delete it.
-  4. Launch the game and press F8.
+  4. Launch the game. THE FIRST LAUNCH TAKES A FEW MINUTES. BepInEx has to unpack the game once
+     before any mod can read it, and it only does that the first time. The window may look frozen, or
+     Windows may say "not responding". Leave it alone. Every launch after that is normal speed.
+  5. Press F8.
 
 That is the whole install. Sorry for the detour — GitHub puts the source download in the biggest button
 on the page, and there is nothing this project can do about that except leave this note where you would

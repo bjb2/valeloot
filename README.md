@@ -10,6 +10,10 @@ It is complete on its own. No companion app, no server, no account, nothing to s
 >
 > Unzip it into your SpiritVale folder, launch the game, press **F8**.
 >
+> **The first launch takes a few minutes.** BepInEx has to unpack the game once before any mod can
+> read it, and it only does that the first time. The game may sit on a black window or look frozen
+> while it happens — leave it alone. Every launch after that is normal speed.
+>
 > **Not the green "Code → Download ZIP" button.** That gives you the source code — a folder called
 > `valeloot-main` full of `.cs` files, which the game cannot load. You want the link above, or the
 > [releases page](https://github.com/bjb2/valeloot/releases/latest).
@@ -84,9 +88,23 @@ ValeLoot installed, because you should be reminded rather than told once.
 
 Take **`ValeLoot-x.y.z-with-BepInEx.zip`** from the releases page.
 
-1. Unzip it into your SpiritVale folder — the one holding `SpiritVale.exe`.
-2. Launch the game.
+1. Unzip it into your SpiritVale folder — the one holding `SpiritVale.exe`. When it is right,
+   `SpiritVale.exe`, `winhttp.dll` and a `BepInEx` folder all sit side by side.
+2. Launch the game — **and be patient the first time.** See below.
 3. Press `F8`.
+
+### The first launch is slow. That is normal.
+
+Before any mod can read the game, BepInEx has to unpack it once — it writes a few hundred files into
+`BepInEx/interop/`, and that takes **a few minutes on a first run**. The game may sit on a black window,
+or look like it has hung, or Windows may grey it out and say "not responding". Leave it. It only happens
+once; every launch afterwards is normal speed.
+
+This is the single most likely reason to think ValeLoot is broken when it is not. If you close the game
+during that first unpack, nothing will have loaded and it will look exactly like a failed install.
+
+You can watch it happen if you want reassurance: `BepInEx/LogOutput.log` grows while it works, and
+`BepInEx/interop/` fills up with files.
 
 That is the whole install. BepInEx is included, unmodified, because picking the wrong BepInEx build is the
 commonest way to fail at installing a mod like this: BepInEx 5 and the *stable* 6 release do not load
