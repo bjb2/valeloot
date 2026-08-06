@@ -1,0 +1,51 @@
+# BERSERKER / WARRIOR — Cyclone
+#
+# Based on "(Cyclone) Lv1 to 150 COMPREHENSIVE GUIDE" by grindenjoyer, from the SpiritValers
+# build library. That build runs Chaos Reaver with Str gear all the way up (Glove_Str,
+# Armor_Str, Feet_Str) at +9, and lands 376 Atk with 21% crit.
+#
+# So this filter looks for: Str, then Atk speed, on the weapons Cyclone actually swings.
+
+Threshold 90
+
+
+# Two-handers are the whole build. A Str roll on one is worth stopping for.
+Show "Cyclone weapon"
+    Type      Axe, Sword, Twinblade, Scythe, Spear
+    Stat      Str >= 3
+    Color     #e9c46a
+    Tag       CYCLONE
+    Highlight glow
+    Sound     chime
+
+# Anything with two lines in the top tenth, whatever it is — those are rare enough to look at.
+Show "Two top rolls"
+    TopRolls  >= 2
+    Color     #7cc0ff
+    Tag       TOP2
+    Highlight glow
+
+# Str is the stat the whole build scales on, so a maxed line matters even on a stray piece.
+Show "Maxed Str"
+    Stat      Str >= 3
+    Color     #c4a5ff
+    Tag       STR
+    Highlight mark
+
+# Cyclone wants attack speed once Str is handled.
+Show "Attack speed"
+    Stat      AtkSpd >= 6
+    Color     #5eead4
+    Tag       ASPD
+    Highlight mark
+
+# The guide refines everything to +9, so a high refine drop saves you real material.
+Show "Already refined"
+    Refine    >= 7
+    Color     #ff9f6b
+    Tag       "+7"
+    Highlight dot
+
+Hide "vendor trash"
+    AvgRoll   < 35
+    TopRolls  < 1

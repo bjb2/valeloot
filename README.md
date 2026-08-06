@@ -147,6 +147,22 @@ already prints two thirds of the maximum, so on an attribute that caps at 3, `>=
 You never have to guess a spelling. ValeLoot writes every item and stat name the game knows to
 `valeloot-items.txt`, and refreshes it when the game gets new content.
 
+### Per-class examples
+
+Four starting points in [`examples/`](examples), each built from a public guide in the
+[SpiritValers build library](https://spiritvalers.com/builds) — the gear that build actually wears and
+the stats it actually leans on:
+
+| File | Based on | Hunts for |
+|---|---|---|
+| [`berserker-cyclone.txt`](examples/berserker-cyclone.txt) | *(Cyclone) Lv1 to 150 Comprehensive Guide* by grindenjoyer | Str on two-handers, attack speed, pre-refined gear |
+| [`priest-support.txt`](examples/priest-support.txt) | *Priest - Zero to Hero* by ragnarok | Vit, Int on wands, shields — a wall, not a damage dealer |
+| [`gunslinger-crit.txt`](examples/gunslinger-crit.txt) | couc9527's launcher build | Dex on guns, and crit **damage** over crit rate, since that build is already capped |
+| [`wizard-frost.txt`](examples/wizard-frost.txt) | *Frost Mage - Tower/Bossing* by danc9399 | Int, casting weapons, MP for long tower runs |
+
+Copy one over your `valeloot-filter.txt` and edit from there. They are meant to be argued with — your
+build is not that build.
+
 ## The editor
 
 `F8` opens it. There is nothing to install and no folder to choose — the mod serves the page itself, so it

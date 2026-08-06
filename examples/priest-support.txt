@@ -1,0 +1,51 @@
+# PRIEST — support / tank
+#
+# Based on "Priest - Zero to Hero" by ragnarok, from the SpiritValers build library. That build
+# is a wall: 41,485 HP, 369 Def, 472 Mdef, 30% block, with Matk 360 for heals, running a Life
+# Staff and Arrowcatch Wall behind Knight armour at +10.
+#
+# A support filter is not a damage filter. It hunts survivability first and Int second.
+
+Threshold 90
+
+
+# Vit is the stat that build is made of.
+Show "Vit for the wall"
+    Stat      Vit >= 3
+    Color     #4ade80
+    Tag       VIT
+    Highlight glow
+    Sound     chime
+
+# Healing scales on Int, so an Int roll on a wand is the other thing worth stopping for.
+Show "Healing gear"
+    Type      Wand, Grimoire, Book
+    Stat      Int >= 3
+    Color     #7cc0ff
+    Tag       HEAL
+    Highlight glow
+
+# A shield is a build-defining slot for this one, not a leftover.
+Show "Shields"
+    Type      Shield
+    Color     #c4a5ff
+    Tag       BLOCK
+    Highlight mark
+
+Show "Two top rolls"
+    TopRolls  >= 2
+    Color     #e9c46a
+    Tag       TOP2
+    Highlight mark
+
+# +10 across the whole build means refine is expensive. Anything pre-refined helps.
+Show "Already refined"
+    Refine    >= 7
+    Color     #ff9f6b
+    Tag       "+7"
+    Highlight dot
+
+# A support has no use for raw attack rolls.
+Hide "damage-only junk"
+    AvgRoll   < 40
+    TopRolls  < 1

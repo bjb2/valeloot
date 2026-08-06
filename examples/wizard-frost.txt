@@ -1,0 +1,49 @@
+# WIZARD — frost, tower and bossing
+#
+# Based on "FROST MAGE - TOWER/BOSSING" by danc9399, from the SpiritValers build library:
+# Everfrost Staff +10 with Int gear throughout (Glove_Int, Armor_Int, Feet_Int), 1,256 Matk,
+# 1,952 MP, 169 ASPD. The author notes they are still testing Agi for skill delay.
+#
+# A glass cannon filter: Int, then the wands that carry it, then MP to keep casting.
+
+Threshold 90
+
+
+# Int is the entire build.
+Show "Int for Matk"
+    Stat      Int >= 3
+    Color     #7cc0ff
+    Tag       INT
+    Highlight glow
+    Sound     chime
+
+Show "Casting weapon"
+    Type      Wand, Grimoire, Book, Instrument
+    Stat      Int >= 90%
+    Color     #e9c46a
+    Tag       CASTER
+    Highlight glow
+
+# Tower runs are long; MP is the difference between finishing and walking back.
+Show "Mana"
+    Stat      MpMult >= 4
+    Color     #4ade80
+    Tag       MP
+    Highlight mark
+
+Show "Two top rolls"
+    TopRolls  >= 2
+    Color     #c4a5ff
+    Tag       TOP2
+    Highlight mark
+
+# The author is testing Agi for cast delay — keep an eye out, quietly.
+Show "Agi, being tested"
+    Stat      Agi >= 3
+    Color     #5eead4
+    Tag       AGI?
+    Highlight dot
+
+Hide "vendor trash"
+    AvgRoll   < 35
+    TopRolls  < 1

@@ -1,0 +1,50 @@
+# GUNSLINGER — crit launcher
+#
+# Based on couc9527's Gunslinger build from the SpiritValers build library: Launcher +10, Dex
+# gear (Glove_Dex, Armor_Dex), and the numbers that matter — 1,265 Atk, 100% crit, 255% crit
+# damage, 160 ASPD, 550 Hit.
+#
+# Crit rate is already capped in that build, so crit DAMAGE is what keeps scaling. This filter
+# reflects that: Dex first, crit damage second, plain crit rate last.
+
+Threshold 90
+
+
+# The guns. Dex on one of these is the drop this class is farming for.
+Show "Gunslinger weapon"
+    Type      Launcher, Shotgun, Rifle, Pistol, GatlingGun
+    Stat      Dex >= 3
+    Color     #e9c46a
+    Tag       GUN
+    Highlight glow
+    Sound     chime
+
+# Crit damage keeps paying after crit rate is capped.
+Show "Crit damage"
+    Stat      CritDamage >= 10
+    Color     #f472b6
+    Tag       CDMG
+    Highlight glow
+
+Show "Maxed Dex"
+    Stat      Dex >= 3
+    Color     #7cc0ff
+    Tag       DEX
+    Highlight mark
+
+# Only useful until you are capped — keep it quiet, at dot.
+Show "Crit rate"
+    Stat      Crit >= 8
+    Color     #c4a5ff
+    Tag       CRIT
+    Highlight dot
+
+Show "Two top rolls"
+    TopRolls  >= 2
+    Color     #5eead4
+    Tag       TOP2
+    Highlight mark
+
+Hide "vendor trash"
+    AvgRoll   < 35
+    TopRolls  < 1
