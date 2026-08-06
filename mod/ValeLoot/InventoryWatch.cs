@@ -117,6 +117,25 @@ internal static class InventoryWatch
     private const int TickInterval = 15;
 
     /**
+     * Consecutive checks with a live inventory and still no baseline, before this calls itself broken.
+     *
+     * 240 checks is about a minute of play at four a second. Long enough that no ordinary login,
+     * zone change or character update can reach it; short enough that a player about to write "the
+     * sounds do not work" already has the answer in their log.
+     */
+    private const int StuckAfterChecks = 240;
+
+    /**
+     * How long with NO live inventory from any `PlayerSave` before it counts as a logout.
+     *
+     * Milliseconds, not ticks, and that is the point: `Update` fires once per player near you, so a
+     * tick count means something different in a town than it does in a field. Two seconds of nobody
+     * holding an inventory is a logout or a character select; a zone change blanks it for a frame or
+     * two and comes straight back with the same bag.
+     */
+    private const int LogoutAfterMs = 2000;
+
+    /**
      * One bag dictionary on `InventoryData`.
      *
      * `Stack` is discovered rather than declared: the first value a dictionary hands back names its
@@ -180,6 +199,23 @@ internal static class InventoryWatch
     public static long Arrivals;
     public static long Primes;
 
+
+    /**
+     * Why the baseline was dropped, counted per reason.
+     *
+     * Four different events all end in `Forget()`, and from outside they are indistinguishable — the
+     * baseline is simply empty again. Working out which one is firing by reasoning about a 4 Hz tick
+     * sampled over HTTP does not converge; counting them does, and it costs one increment on a path
+     * that already decided to throw the bag away.
+     */
+    public static long ForgetNoCharacter;
+    public static long ForgetSwitch;
+    public static long ForgetMissingBag;
+    public static long ForgetShapeChange;
+
+    /// <summary>Ticks whose `PlayerSave` held no inventory — somebody else's character. In a town
+    /// this dwarfs <see cref="Checks"/>, which is the whole reason a null one must mean nothing.</summary>
+    public static long Strangers;
     /// <summary>Whether a baseline exists yet. False means no character has been observed.</summary>
     public static bool Primed => _primed;
     /// <summary>How many keys the baseline holds — your whole bag, once primed.</summary>
@@ -217,9 +253,17 @@ internal static class InventoryWatch
     /// <summary>Which bags existed at the last check. A change re-primes, so a dictionary the game
     /// allocates later arrives as baseline rather than as a bagful of pickups.</summary>
     private static int _present;
+    /// <summary>Consecutive checks with an inventory present and nothing primed. Reset by priming.</summary>
+    private static int _unprimedChecks;
+    /// <summary>The stuck warning is said once per session, never repeated.</summary>
+    private static bool _saidStuck;
     private static long _lastTotal = -1;
     private static int _frames;
     private static bool _countWarned;
+
+    /// <summary>When a live inventory was last seen, from `TickCount64`. TIME, not ticks: the tick
+    /// rate scales with how many players are standing near you, so a count would mean nothing.</summary>
+    private static long _lastLive;
 
     /**
      * Resolve the data path by NAME, and say plainly what it cost if it did not resolve.
@@ -291,6 +335,11 @@ internal static class InventoryWatch
         Installed = false;
         Forget();
         _present = 0;
+        _unprimedChecks = 0;
+        _lastLive = 0;
+        // Reset with everything else: a reloaded plugin has to be able to warn again, or the single
+        // line that says the feature is dead is spent on a session that no longer exists.
+        _saidStuck = false;
         _countFields.Clear();
         for (int i = 0; i < _bags.Length; i++) _bags[i].Stack = -1;
         _log = _ => { };
@@ -299,23 +348,92 @@ internal static class InventoryWatch
     /**
      * One frame, from `PlayerSave.Update`. `playerSave` is the hook's `self`.
      *
-     * Guarded by the caller, which disarms its whole tick on the first exception — an exception
-     * escaping into native code is a crash, not a stack trace.
+     * ## There is one `PlayerSave` per player in range, and only one of them is yours
+     *
+     * `PlayerSave` is a networked behaviour, so the engine ticks `Update` on an instance for every
+     * player near you. Exactly one of those — yours — has a `CharacterData` with an `Inventory`
+     * behind it. Everyone else's reads null.
+     *
+     * This cost the feature an afternoon and a shipped release. The old code treated ANY null
+     * inventory as "no character: character select, or a logout" and dropped the baseline, which is
+     * right for the one instance that is yours and catastrophic for the eight that are not: standing
+     * in a town, 97% of ticks were other people, so the bag was thrown away nine times for every
+     * time it was read. Measured, once there were per-reason counters:
+     * `checks:3783, noChar:3679, switch:1, missing:0, shape:1`, with `primes == walks` exactly —
+     * every walk re-primed from nothing, so no arrival could ever be seen.
+     *
+     * It also scaled with POPULATION, which is why it looked haunted: the same build read
+     * `primed:true, held:421` somewhere quiet an hour earlier, and the shared frame counter ran at
+     * ~38 checks a second instead of 4 because every nearby player was driving it.
+     *
+     * ## Selected by what it HOLDS, not by which object it is
+     *
+     * The first fix latched the instance pointer — adopt the save that has an inventory, ignore the
+     * rest. It does not work: the adopted pointer never matched again (`latches:1, strangers:4751,
+     * checks:0`), so whatever the hook hands over is not a stable identity for the local player.
+     * Rather than go looking for one, this stops needing it.
+     *
+     * A live inventory IS the identifier. Only your save has one, so a tick that produces one is
+     * yours by construction, and a tick that does not is somebody else's and simply not our
+     * business — no counter, no baseline, above all no `Forget`.
+     *
+     * That leaves "how do we notice a real logout", and the answer cannot be counted in ticks,
+     * because the number of ticks is a function of how many people are standing near you. It is
+     * measured in TIME: nobody has produced a live inventory for a couple of seconds. A zone change
+     * blanks it for a frame or two, a logout does not come back.
      */
     public static void Tick(IntPtr playerSave)
     {
         if (!Installed || playerSave == IntPtr.Zero) return;
+
+        IntPtr character = Marshal.ReadIntPtr(playerSave, _saveData);
+        IntPtr inventory = character == IntPtr.Zero ? IntPtr.Zero : Marshal.ReadIntPtr(character, _inventory);
+
+        if (inventory == IntPtr.Zero)
+        {
+            Strangers++;
+            // Somebody else, or the moment before ours exists. Only a sustained absence is a logout,
+            // and `_primed` guards it so the character-select screen is not re-forgotten every frame.
+            if (_primed && Environment.TickCount64 - _lastLive > LogoutAfterMs)
+            {
+                ForgetNoCharacter++;
+                Forget();
+            }
+            return;
+        }
+
+        _lastLive = Environment.TickCount64;
+
         if (++_frames < TickInterval) return;
         _frames = 0;
         Checks++;
 
-        IntPtr character = Marshal.ReadIntPtr(playerSave, _saveData);
-        IntPtr inventory = character == IntPtr.Zero ? IntPtr.Zero : Marshal.ReadIntPtr(character, _inventory);
-        if (inventory == IntPtr.Zero)
+
+        /**
+         * A feature that can die silently has to notice.
+         *
+         * `pickup watch ready` is logged once, at boot, which is the least informative moment there
+         * is: there is no character yet, so the line reads the same whether the watcher is healthy or
+         * about to be dead for the whole session. It then never speaks again. When a null
+         * `InventoryData.Cosmetics` made every tick bail, everything that normally proves the plugin
+         * is alive stayed green — the bag painted, `checks` ran to 39,821 — and the only tell was one
+         * boolean nobody looks at.
+         *
+         * This is the state that is not ambiguous: the inventory pointer is LIVE (so there is a
+         * character, and this is not the login screen) and yet no baseline has ever been taken. A
+         * minute of that is not a slow start, it is a broken watcher.
+         *
+         * Said ONCE, and it names what it found rather than that something is wrong, because the
+         * player pasting it is the only evidence of WHICH dictionary moved.
+         */
+        if (_primed)
         {
-            // No character: the character-select screen, or a logout. The next login primes again.
-            Forget();
-            return;
+            _unprimedChecks = 0;
+        }
+        else if (++_unprimedChecks == StuckAfterChecks && !_saidStuck)
+        {
+            _saidStuck = true;
+            WarnStuck(inventory);
         }
 
         /**
@@ -334,6 +452,7 @@ internal static class InventoryWatch
         }
         if (!string.Equals(uid, _characterUid, StringComparison.Ordinal))
         {
+            ForgetSwitch++;
             Forget();
             _characterUid = uid;
         }
@@ -368,7 +487,7 @@ internal static class InventoryWatch
             IntPtr dictionary = Marshal.ReadIntPtr(inventory, _bags[i].Offset);
             if (dictionary == IntPtr.Zero)
             {
-                if (_bags[i].Required) { Forget(); return; }
+                if (_bags[i].Required) { ForgetMissingBag++; Forget(); return; }
                 continue;
             }
             _live[i] = dictionary;
@@ -386,6 +505,7 @@ internal static class InventoryWatch
         if (present != _present)
         {
             _present = present;
+            ForgetShapeChange++;
             Forget();
         }
 
@@ -415,7 +535,10 @@ internal static class InventoryWatch
     public static string Status()
         => Installed
          ? $"pickup watch: {Summary}, {(_primed ? "primed" : "waiting for a character")}, "
-         + $"{_baseline.Count} key(s) held, {Checks} check(s), {Walks} walk(s), {Arrivals} pickup(s)"
+         + $"{_baseline.Count} key(s) held, {Checks} check(s), {Walks} walk(s), {Arrivals} pickup(s), "
+         // Included because it is the number that explains the other numbers: it is every tick that
+         // belonged to somebody standing near you, and it is normally far larger than `Checks`.
+         + $"{Strangers} tick(s) from other players' saves"
          : $"pickup watch: NOT installed ({Summary}) — no loot sound can play this session";
 
     /**
@@ -548,6 +671,39 @@ internal static class InventoryWatch
         // The uid deliberately SURVIVES: `_primed` going false is what makes the next observation a
         // silent prime, so a logout and a re-login to the same character stays quiet without needing to
         // forget who it was. Clearing it here would make every ordinary Forget look like a switch.
+    }
+
+    /**
+     * Say, once, that the watcher has a character and no bag — and say what it actually saw.
+     *
+     * Written as a CONSEQUENCE followed by evidence, because "pickup watch is stuck" tells a player
+     * nothing they can act on or paste usefully. Each dictionary is re-read here rather than trusting
+     * the cached mask, so the line describes this moment rather than some earlier one; it runs once
+     * in a session, so a handful of pointer reads costs nothing.
+     *
+     * The three states a bag can be in are spelled differently on purpose:
+     *   0x38 present  — resolved and allocated, fine
+     *   0x40 NULL     — resolved, and the game has not allocated it. Normal for a kind you own none
+     *                   of, and only fatal if it is the required one
+     *   MISSING       — the field did not resolve at all, i.e. this game build renamed it
+     */
+    private static void WarnStuck(IntPtr inventory)
+    {
+        var found = new System.Text.StringBuilder();
+        for (int i = 0; i < _bags.Length; i++)
+        {
+            if (found.Length > 0) found.Append(", ");
+            found.Append(_bags[i].Field).Append(' ');
+            if (_bags[i].Offset < 0) { found.Append("MISSING"); continue; }
+            IntPtr dictionary = Marshal.ReadIntPtr(inventory, _bags[i].Offset);
+            found.Append(Hex(_bags[i].Offset)).Append(dictionary == IntPtr.Zero ? " NULL" : " present");
+        }
+
+        _log($"pickup watch STUCK — {StuckAfterChecks} checks with a character loaded and no bag ever "
+           + "read, so NO loot sound can play this session. Highlighting, the hover note and the "
+           + $"editor are unaffected. What it sees: {found}. Character uid "
+           + $"{(_characterUid.Length > 0 ? "read" : "NOT read")}. "
+           + "A required dictionary reading NULL or MISSING is the cause; please report this line.");
     }
 
     private static string Hex(int offset) => offset < 0 ? "MISSING" : $"0x{offset:x}";

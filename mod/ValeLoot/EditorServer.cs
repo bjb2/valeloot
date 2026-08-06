@@ -571,6 +571,15 @@ internal static class EditorServer
             .Append(",\"held\":").Append(InventoryWatch.Held.ToString(CultureInfo.InvariantCulture))
             .Append(",\"checks\":").Append(InventoryWatch.Checks.ToString(CultureInfo.InvariantCulture))
             .Append(",\"walks\":").Append(InventoryWatch.Walks.ToString(CultureInfo.InvariantCulture))
+            // `primes` sits next to `_primed = true` in the walk, so it separates the two ways a
+            // watcher can look dead: primes climbing with `primed` false means something CLEARS the
+            // baseline after every walk, primes stuck at zero means the walk never finishes.
+            .Append(",\"primes\":").Append(InventoryWatch.Primes.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"forgetNoChar\":").Append(InventoryWatch.ForgetNoCharacter.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"forgetSwitch\":").Append(InventoryWatch.ForgetSwitch.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"forgetMissing\":").Append(InventoryWatch.ForgetMissingBag.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"forgetShape\":").Append(InventoryWatch.ForgetShapeChange.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"strangers\":").Append(InventoryWatch.Strangers.ToString(CultureInfo.InvariantCulture))
             .Append(",\"arrivals\":").Append(InventoryWatch.Arrivals.ToString(CultureInfo.InvariantCulture))
             .Append(",\"announced\":").Append(LootSound.Announced.ToString(CultureInfo.InvariantCulture))
             .Append(",\"played\":").Append(LootSound.Played.ToString(CultureInfo.InvariantCulture))
