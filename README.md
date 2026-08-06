@@ -80,7 +80,7 @@ Game staff, replying publicly about a loot-presentation tool:
 
 **Allowed is not endorsed.** Nobody has approved this mod, nobody is going to, and if something goes wrong
 with your account that is on you. The same warning prints in the log every time the game starts with
-ValeLoot installed, because you should be reminded rather than told once.
+ValeLoot installed.
 
 ---
 
@@ -157,10 +157,10 @@ Hide "vendor trash"
 | `Favorite` | the star you put on it in game |
 | `AlwaysShow "…"` / `AlwaysHide "…"` | one item by name, ignoring rule order entirely |
 
-**The `%` is a real distinction, not decoration.** `Stat Agi >= 90%` asks how *well* the line rolled;
+**The `%` is a real distinction.** `Stat Agi >= 90%` asks how *well* the line rolled;
 `Stat Agi >= 3` asks what it *prints*. They are different questions with different answers: a 0% roll
 already prints two thirds of the maximum, so on an attribute that caps at 3, `>= 3` means maxed while
-`>= 90%` means genuinely lucky. The editor says so where you type it.
+`>= 90%` means genuinely lucky.
 
 You never have to guess a spelling. ValeLoot writes every item and stat name the game knows to
 `valeloot-items.txt`, and refreshes it when the game gets new content.
@@ -209,9 +209,6 @@ The editor is served from the mod over loopback, on `http://127.0.0.1:38512/`.
   opened, and `F8` then opens a local copy of the editor as a plain file instead. Everything else keeps
   working; the editor is a convenience, and highlighting is the product.
 
-An earlier version had no socket at all and shipped the editor as a file you opened yourself. It worked,
-and the process was miserable: find the file, open the right browser, grant a folder in a dialog. This is
-the trade, made deliberately and documented rather than hidden.
 
 ## Settings
 
