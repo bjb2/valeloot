@@ -1,0 +1,9 @@
+# LF in the working tree, on every platform.
+#
+# `mod/ValeLoot/editor/ValeLoot-editor.html` is a COMMITTED BUILD ARTIFACT: the csproj embeds it, so a
+# contributor without bun can still produce a plugin. `bun run build:editor` emits it with whatever
+# line endings its source was checked out with — so under git's Windows default a fresh clone rebuilds
+# a file 2.5 KB larger than the committed one and reports a diff that is nothing but CRLF. That is a
+# phantom change on the exact file whose staleness is the thing worth noticing, so it is ruled out
+# here rather than explained every time.
+* text=auto eol=lf
