@@ -6,10 +6,11 @@ when a matching item is picked up.
 
 It is complete on its own. No companion app, no server, no account, nothing to sign up for.
 
-![The ValeLoot editor: a real bag on the right, tinted by the rules on the left](docs/editor.webp)
+![The ValeLoot editor beside the game, the same items lit the same colours in both](docs/valeloot.png)
 
-*The editor, showing a real 351-item bag. Each cell carries the colour of the rule that claimed it, at the
-intensity that rule asked for. Point at a rule and the bag dims to show you exactly which items it took.*
+*Left: the editor, and your rules as text. Middle: what those rules do to your bag. Right: the game's own
+inventory, with the same cells lit the same colours. `TOP2` is two top rolls, `AGI%` is a top-rolled Agi,
+`FAV` is a favourite, `CRIT` is high crit — all from the rules shown on the left.*
 
 ---
 
@@ -35,7 +36,7 @@ developer's stance* below.
 - **Names the rule on hover.** The item tooltip gains one line, in that rule's colour, saying which of
   your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
 - **Plays a sound when a matching item is picked up** — bag open or closed, once per item. Equipment and
-  artifacts today; see *Known limitations*.
+  artifacts today; see *Good to know*.
 - **Reloads while you play.** Save your rules and the bag recolours on the next inventory redraw. No
   restart, no relog.
 - **Comes with an editor.** Press `F8` in game and your browser opens on it, already showing your real bag.
