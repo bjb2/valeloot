@@ -1,0 +1,12 @@
+{
+  "name": "valeloot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:editor": "bun run tools/build-valeloot-editor.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

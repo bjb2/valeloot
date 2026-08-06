@@ -1,0 +1,149 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>ValeLoot</AssemblyName>
+    <RootNamespace>ValeLoot</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Drives both the assembly version and the name of the shipped zip. -->
+    <Version>0.1.0</Version>
+    <!-- BepInEx BE packages are prerelease by definition. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
+    <!--
+      NO DEFAULT ON PURPOSE. This used to default to the live Steam install, so a bare
+      `dotnet build` silently wrote a plugin into the game the maintainer actually plays.
+      Deploying is now opt-in: pass -p:GameDir=<path> (a sandbox copy for development).
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
+  </ItemGroup>
+
+  <!--
+    The rule editor, COMPILED INTO THE DLL.
+
+    It is an embedded resource rather than a file beside the plugin because the file beside the
+    plugin was the install step nobody completed: find an HTML file in a plugins folder, open it in a
+    browser that happens to have the right API, then grant it a folder in a native dialog. The mod
+    now serves the page itself on F8, so the shipped zip contains a DLL and a README and there is
+    nothing for a player to find. `EditorServer` also writes a copy next to the config file on first
+    run, which is the `file://` fallback for a blocked port or a shut game.
+
+    Built by `tools/build-valeloot-editor.ts` (`bun run build:editor`) from tools/valeloot-editor/.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="editor/ValeLoot-editor.html" LogicalName="ValeLoot.editor.html" />
+  </ItemGroup>
+
+  <!--
+    A missing editor FAILS THE BUILD, with the command that generates it.
+
+    Without this the failure is csc's "resource file could not be found", which names a path and not
+    the thing to run; and once it is embedded, a build that quietly succeeded without it would ship a
+    DLL whose `GET /` serves nothing. A missing generated artifact must break the build that needed
+    it, at the moment it needed it.
+  -->
+  <Target Name="RequireEditorHtml" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/editor/ValeLoot-editor.html')"
+           Text="ValeLoot needs the rule editor at editor/ValeLoot-editor.html to embed in the DLL, and it is not there. Generate it first: `bun run build:editor` (tools/build-valeloot-editor.ts)." />
+  </Target>
+
+  <!--
+    Everything here binds il2cpp metadata BY NAME at runtime (HookCensus), so the mod deliberately
+    has no reference to the BepInEx/interop/*.dll proxies. That keeps the build independent of the
+    game having ever booted with BepInEx, and survives game patches that shuffle RVAs.
+  -->
+
+  <Target Name="CopyToGame" AfterTargets="Build" Condition="'$(GameDir)' != '' And Exists('$(GameDir)/BepInEx')">
+    <MakeDir Directories="$(GameDir)/BepInEx/plugins/ValeLoot" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)/BepInEx/plugins/ValeLoot" />
+    <Message Importance="high" Text="ValeLoot -> $(GameDir)/BepInEx/plugins/ValeLoot" />
+  </Target>
+
+  <!--
+    The plugin-only artifact: `dotnet build -t:Package`.
+
+    This zip contains the DLL and README.txt and NOTHING ELSE — no BepInEx, no HTML. It is for the
+    player who already runs BepInEx 6 IL2CPP; the bundled download that carries BepInEx too is a
+    separate target. It still unzips at the game folder, because the paths inside it are
+    `BepInEx/plugins/ValeLoot/`, so there is no chance of dropping the DLL one directory too high.
+
+    There is no editor file in here on purpose. The page is embedded in the DLL (see the
+    EmbeddedResource above) and served on F8, and `EditorServer` writes the `file://` fallback copy
+    into BepInEx/config on first run. An HTML file a player has to find was the install step that
+    failed. README.txt travels INSIDE the plugin folder rather than at the zip root, so unzipping
+    never litters loose files next to the game executable, and the player who forgets what the folder
+    is a year from now finds the answer beside the DLL.
+
+    Nothing here touches the game: it stages from $(TargetPath) and zips. Packaging works on a
+    machine that has never installed SpiritVale, which is the point of a shareable build. The editor
+    is required by the BUILD now (RequireEditorHtml + EmbeddedResource), so packaging cannot reach
+    this point without it and needs no check of its own.
+  -->
+  <Target Name="Package" DependsOnTargets="Build">
+    <PropertyGroup>
+      <PackageStageDir>$(MSBuildProjectDirectory)/dist/stage</PackageStageDir>
+      <PackagePluginDir>$(PackageStageDir)/BepInEx/plugins/ValeLoot</PackagePluginDir>
+      <PackageZipPath>$(MSBuildProjectDirectory)/dist/ValeLoot-$(Version).zip</PackageZipPath>
+    </PropertyGroup>
+    <!-- Stage from empty every time: a stale DLL in the zip is the worst possible bug to ship. -->
+    <RemoveDir Directories="$(PackageStageDir)" />
+    <MakeDir Directories="$(PackagePluginDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackagePluginDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/README.txt" DestinationFolder="$(PackagePluginDir)" />
+    <Delete Files="$(PackageZipPath)" />
+    <ZipDirectory SourceDirectory="$(PackageStageDir)" DestinationFile="$(PackageZipPath)" />
+    <RemoveDir Directories="$(PackageStageDir)" />
+    <Message Importance="high" Text="ValeLoot package -> $(PackageZipPath)" />
+  </Target>
+
+  <!--
+    The DEFAULT download: `dotnet build -t:PackageBundle`.
+
+    BepInEx is bundled, so the whole install is "unzip into your game folder, launch, press F8". That
+    is not only convenience: BepInEx 5 and the STABLE 6 release do not load plugins into an IL2CPP
+    game, the download page does not make that obvious, and picking the wrong one was the commonest
+    way to fail at installing this mod. Bundling removes the choice, and it pins the exact build the
+    mod was tested against.
+
+    Licence terms, satisfied here rather than assumed: BepInEx is LGPL-2.1, this is unmodified mere
+    aggregation, and the licence text plus a NOTICE naming the version and linking the upstream source
+    ride at the ZIP ROOT where a player sees them — not buried inside the plugin folder.
+
+    Deliberately a separate target from `Package`: someone who already runs BepInEx should not have to
+    download 30 MB of it again, and a bundle that overwrote a working install's `core/` would be a
+    hostile default.
+  -->
+  <Target Name="PackageBundle" DependsOnTargets="Build">
+    <PropertyGroup>
+      <BundleStageDir>$(MSBuildProjectDirectory)/dist/bundle-stage</BundleStageDir>
+      <BundlePluginDir>$(BundleStageDir)/BepInEx/plugins/ValeLoot</BundlePluginDir>
+      <BundleZipPath>$(MSBuildProjectDirectory)/dist/ValeLoot-$(Version)-with-BepInEx.zip</BundleZipPath>
+      <BepInExZip>$(MSBuildProjectDirectory)/../../tools/BepInEx-IL2CPP-be785.zip</BepInExZip>
+    </PropertyGroup>
+    <!--
+      A missing BepInEx archive FAILS rather than quietly producing a "bundle" with no BepInEx in it.
+      That zip would look exactly like the real one and fail only on a player's machine, at the one
+      moment they have no way to diagnose it.
+    -->
+    <Error Condition="!Exists('$(BepInExZip)')"
+           Text="PackageBundle needs the BepInEx IL2CPP archive at $(BepInExZip). Download the bleeding-edge win-x64 IL2CPP build (be.785, the version named in thirdparty/NOTICE.txt) and put it there, or run -t:Package for the plugin-only zip." />
+    <RemoveDir Directories="$(BundleStageDir)" />
+    <MakeDir Directories="$(BundleStageDir)" />
+    <!-- Unmodified, exactly as published: extracted, never rewritten. -->
+    <Unzip SourceFiles="$(BepInExZip)" DestinationFolder="$(BundleStageDir)" />
+    <MakeDir Directories="$(BundlePluginDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(BundlePluginDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/README.txt" DestinationFolder="$(BundlePluginDir)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/thirdparty/NOTICE.txt;$(MSBuildProjectDirectory)/thirdparty/BepInEx-LICENSE.txt"
+          DestinationFolder="$(BundleStageDir)" />
+    <Delete Files="$(BundleZipPath)" />
+    <ZipDirectory SourceDirectory="$(BundleStageDir)" DestinationFile="$(BundleZipPath)" />
+    <RemoveDir Directories="$(BundleStageDir)" />
+    <Message Importance="high" Text="ValeLoot bundle -> $(BundleZipPath)" />
+  </Target>
+
+</Project>

@@ -1,0 +1,2553 @@
+<!doctype html>
+<!--
+  ValeLoot — the standalone filter editor.
+
+  SOURCE FILE. `bun run build:editor` inlines the compiled parser at the marked point below and
+  writes mod/ValeLoot/editor/ValeLoot-editor.html. Edit this, never the emitted file.
+
+  WHAT THIS PAGE IS. A player who installs ValeLoot gets a text file. This is the thing that makes
+  that text file editable without a second application: one HTML file, no external references, that
+  runs the real parser and draws the real bag.
+
+  IT HAS TWO MODES, AND IT ASKS WHICH ONE IT IS IN. Press F8 in game and the mod SERVES this page
+  from a loopback HTTP server — bound to 127.0.0.1, carrying this page, the rules, the bag and the
+  item catalog and nothing else — so there is no folder to grant and a save is a POST the mod writes.
+  Opened from the filesystem instead, it is what it always was: the File System Access API over the
+  three files in `BepInEx/config`. The mode is decided by asking `api/health` and believing the
+  answer, never by reading the url, because a page still on an http url whose mod has exited is
+  exactly the case where a guess produces a Save button that lies. Every request here is RELATIVE for
+  the same reason: an absolute loopback url from a `file://` page is a cross-origin request that
+  fails in a way indistinguishable from "the port is busy".
+
+  THE SOCKET IS DISCLOSED, NOT MENTIONED. Served, the footer says which address is feeding the page
+  and that nothing leaves the machine, for as long as that is true. A page that quietly held a socket
+  open would be worse than one that never had one.
+
+  THE HERO IS THE BAG, NOT THE LANGUAGE. The dominant element is a rendered inventory grid of the
+  player's real items, tinted exactly as the mod tints the game's own cells — same three alphas
+  (0.28 / 0.62 / 1.0), same colours, same hover note. A filter is a statement about how a bag LOOKS,
+  so the bag is on screen and every edit anywhere changes it immediately. The rule language is an
+  escape hatch behind a tab, for sharing and for the conditions the pickers do not cover.
+
+  ONE PARSER. `VL` below is compiled from src/filter/loot-dsl.ts and loot-filter.ts — the same
+  modules the language is defined by. Nothing here re-implements the grammar or the matcher.
+
+  TWO ENGINES, THOUGH. The mod's C# parser is the second implementation and it REFUSES four
+  conditions this one accepts (SharedStats, Unknown/Known, Verdict) and a maximum on Refine. Those
+  are linted here as hard errors, because the file being authored is the mod's file: an editor that
+  says "fine" about a block the mod throws away is worse than no editor.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ValeLoot — loot filter</title>
+<style>
+:root{
+  /* Near-black with a green-brown cast, the way a dark fantasy inventory panel sits. Never #000. */
+  --bg:#0b0e0d; --panel:#111614; --slot:#151b18; --sunk:#0c100e;
+  --line:#212a25; --line2:#2f3b34;
+  --ink:#dfe7e1; --dim:#8b9a91; --faint:#5c6b63;
+  /* Chrome is parchment gold and used sparingly — the rule colours do the shouting. */
+  --gold:#c8a961; --gold-dim:#8a7440;
+  --bad:#e2695f; --warn:#e0a72e;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;
+  --ui:"Segoe UI",system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+*{scrollbar-width:thin;scrollbar-color:#2f3b34 transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2a352f;border-radius:99px;border:3px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#3d4c44;border:3px solid transparent;background-clip:content-box}
+body{margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;
+  background:var(--bg);color:var(--ink);font:14px/1.5 var(--ui)}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* ─────────────── header ─────────────── */
+header{display:flex;align-items:center;gap:14px;padding:0 14px;height:44px;flex:none;
+  border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-size:13px;font-weight:700;letter-spacing:2.4px;text-transform:uppercase;color:var(--gold)}
+.brand em{font-style:normal;color:var(--faint);font-weight:600;letter-spacing:1.4px}
+.grow{flex:1}
+.files{display:flex;gap:14px;font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.files b{font-weight:600}
+.files .ok b{color:var(--dim)}
+.files .no b{color:var(--warn)}
+.files i{font-style:normal;color:var(--line2);margin-right:5px}
+.files .ok i{color:#5f8a6d}
+.files .no i{color:var(--warn)}
+.btn{background:transparent;color:var(--dim);border:1px solid var(--line2);border-radius:4px;
+  padding:5px 11px;font-size:12px;transition:border-color .12s,color .12s}
+.btn:hover{border-color:var(--gold-dim);color:var(--ink)}
+.btn.save{border-color:var(--gold-dim);color:var(--gold);font-weight:600;letter-spacing:.3px}
+.btn.save:hover{background:rgba(200,169,97,.1)}
+.btn.save:disabled{border-color:var(--line);color:var(--faint);cursor:not-allowed;background:transparent}
+.btn.tiny{padding:2px 7px;font-size:11px}
+
+/* ─────────────── first run ─────────────── */
+#gate{position:fixed;inset:0;z-index:60;background:radial-gradient(90% 70% at 50% 0%,#141b17,#080b0a 70%);
+  display:flex;align-items:center;justify-content:center;padding:30px}
+#gate .in{max-width:640px;width:100%}
+#gate h1{margin:0 0 6px;font-size:26px;font-weight:700;letter-spacing:5px;text-transform:uppercase;color:var(--gold)}
+#gate .sub{margin:0 0 30px;color:var(--faint);font-size:13px;letter-spacing:.4px}
+#gate p{color:var(--dim);font-size:14px;line-height:1.65;margin:0 0 18px;max-width:60ch}
+#gate p b{color:var(--ink);font-weight:600}
+#gate code{font:12.5px var(--mono);color:var(--gold);background:#0e1311;padding:1px 5px;border-radius:3px}
+.pick{display:block;width:100%;text-align:left;background:#141a17;border:1px solid var(--gold-dim);
+  border-left:3px solid var(--gold);border-radius:5px;padding:16px 18px;color:var(--ink);
+  font-size:16px;font-weight:600;transition:background .14s}
+.pick:hover{background:#1a221d}
+.pick span{display:block;margin-top:5px;font-size:12.5px;font-weight:400;color:var(--dim)}
+.orline{margin:22px 0 12px;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--faint)}
+.manual{display:flex;gap:8px;flex-wrap:wrap}
+.manual label{flex:1;min-width:170px;background:var(--panel);border:1px dashed var(--line2);border-radius:5px;
+  padding:9px 11px;font-size:12px;color:var(--dim);cursor:pointer}
+.manual label:hover{border-color:var(--gold-dim);color:var(--ink)}
+.manual label b{display:block;font:11.5px var(--mono);color:var(--ink);font-weight:600;margin-bottom:2px}
+.manual input{display:none}
+/* Promoted: on a browser with no folder access these three ARE the primary action, so they stop looking
+   like a dashed-outline afterthought and the one you must click first leads. */
+.manual.primary label{border-style:solid;border-color:var(--line2);background:#141a17}
+.manual.primary label:first-child{border-color:var(--gold-dim);border-left:3px solid var(--gold);
+  background:#161d19}
+.manual.primary label:first-child b{color:var(--gold)}
+.caveat{margin-top:22px;padding:11px 13px;border-left:2px solid var(--warn);background:rgba(224,167,46,.06);
+  color:var(--dim);font-size:12.5px;line-height:1.6}
+.caveat b{color:var(--warn)}
+/* This gate exists because someone came the hard way, so the easy way leads rather than hides. */
+#gate .f8{margin:0 0 22px;padding:11px 14px;border-left:2px solid var(--gold);
+  background:rgba(200,169,97,.07);color:var(--dim);font-size:13px;line-height:1.6;max-width:62ch}
+#gate .f8 b{color:var(--gold);font-weight:700}
+
+/* ─────────────── shell ─────────────── */
+main{flex:1;display:grid;grid-template-columns:400px 1fr;min-height:0}
+.rail{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--panel)}
+.stage{display:flex;flex-direction:column;min-height:0;min-width:0}
+.tabs{display:flex;flex:none;border-bottom:1px solid var(--line);background:var(--sunk)}
+.tabs button{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--faint);
+  padding:9px 14px;font-size:11px;letter-spacing:1.3px;text-transform:uppercase;font-weight:600}
+.tabs button:hover{color:var(--dim)}
+.tabs button.on{color:var(--gold);border-bottom-color:var(--gold)}
+.tabs .grow{border-bottom:0}
+.tabs .cnt{align-self:center;padding-right:12px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.tabs .cnt.bad{color:var(--bad)}
+.pane{flex:1;min-height:0;overflow:auto;display:none}
+.pane.on{display:block}
+.pane.flat{display:none;flex-direction:column;overflow:hidden}
+.pane.flat.on{display:flex}
+
+/* ─────────────── the bag: the hero ─────────────── */
+.stagehead{flex:none;display:flex;align-items:baseline;gap:16px;padding:11px 16px 9px;border-bottom:1px solid var(--line)}
+.stagehead h2{margin:0;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--faint);font-weight:600}
+.tally{display:flex;gap:15px;font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+.tally b{color:var(--ink);font-weight:600}
+.tally .lit b{color:var(--gold)}
+.tally s{text-decoration:none;color:var(--line2)}
+.gridwrap{flex:1;min-height:0;overflow:auto;padding:16px;
+  background:
+    radial-gradient(120% 80% at 50% -10%,rgba(200,169,97,.05),transparent 60%),
+    var(--bg)}
+/* Fixed-size squares, packed from the left — an inventory is a grid of slots, not a fluid layout
+   that makes every cell a different size when the window moves. */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,104px);gap:8px;justify-content:start}
+
+/**
+ * Pointing at a rule shows you its items, in the bag, where you are already looking.
+ *
+ * With 140 items and six rules, "this rule claims 15" is a number you have to trust. Dimming
+ * everything the rule did not claim turns it into something you can see, and it is the answer to the
+ * question the rail cannot fit: WHICH fifteen. It also replaces a per-rule text list of item names —
+ * the grid is already showing them, so listing them again was duplicating the stage in the wings.
+ */
+.grid.pointing .cell{opacity:.38;filter:grayscale(.6)}
+/**
+ * The hit cells go BRIGHTER than normal, not merely un-dimmed.
+ *
+ * A rule that claims one item out of 142 is the common case for a good rule, and the first attempt at
+ * this just crushed the other 141 to 16% — which made the grid look broken and still left the eye
+ * hunting for the survivor. Recede the rest gently, and let the claimed cells gain a ring in their own
+ * colour plus a lift, so one cell in a screenful is findable at a glance rather than by scanning.
+ */
+.grid.pointing .cell.hit{opacity:1;filter:none;z-index:1;transform:scale(1.04)}
+.grid.pointing .cell.hit::after{content:'';position:absolute;inset:-3px;border-radius:5px;
+  border:2px solid var(--c);box-shadow:0 0 0 1px rgba(0,0,0,.6),0 0 16px -2px var(--c);pointer-events:none}
+/* A Hide rule's cells are unlit by definition, so their ring is the only thing that can point at them. */
+.grid.pointing .cell.dim.hit::after{border-color:var(--ink);box-shadow:0 0 14px -3px rgba(255,255,255,.5)}
+
+/* A cell, drawn as the game draws a slot: sunken square, hairline bevel, sharp corners. */
+.cell{position:relative;aspect-ratio:1;border:1px solid #2b352e;border-radius:3px;
+  background:linear-gradient(160deg,#202823,#121815);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),inset 0 -10px 16px rgba(0,0,0,.4);
+  padding:5px;display:flex;flex-direction:column;cursor:pointer;overflow:hidden;
+  transition:transform .1s}
+.cell:hover{transform:translateY(-1px)}
+/* Falls off toward the bottom, where the name is: a highlight overlay, not a coat of paint. */
+.cell .tint{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .18s;
+  background:linear-gradient(180deg,var(--c) 0%,color-mix(in srgb,var(--c) 22%,transparent) 100%)}
+.cell .ring{position:absolute;inset:0;border-radius:3px;pointer-events:none;
+  border:1px solid transparent;transition:border-color .18s,box-shadow .18s}
+/**
+ * The three levels, in the mod's proportions rather than its literal alphas.
+ *
+ * In game the highlight sits over an item ICON, so CanvasGroup.alpha 1.0 still leaves something to
+ * look at. Here the cell IS the name, and a full-strength fill turned every glow into a solid
+ * rectangle you could not read — the picture stopped being an inventory slot. So the fill is scaled
+ * down and the difference is carried by the ring and the glow, which is where the eye reads
+ * intensity anyway. What has to survive is the ORDER: dot barely lit, mark clearly lit, glow
+ * unmistakable and moving.
+ */
+.cell.lv1 .tint{opacity:.16}
+.cell.lv1 .ring{border-color:color-mix(in srgb,var(--c) 40%,transparent)}
+.cell.lv2 .tint{opacity:.34}
+.cell.lv2 .ring{border-color:var(--c);box-shadow:inset 0 0 10px color-mix(in srgb,var(--c) 45%,transparent)}
+.cell.lv3 .tint{opacity:.52}
+.cell.lv3 .ring{border-color:var(--c);animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 55%,transparent),inset 0 0 12px color-mix(in srgb,var(--c) 50%,transparent)}
+  50%{box-shadow:0 0 14px 3px color-mix(in srgb,var(--c) 75%,transparent),inset 0 0 20px color-mix(in srgb,var(--c) 70%,transparent)}
+}
+/* Unclaimed is quiet, not unreadable: "no rule touches this" is a thing the player looks for. */
+.cell.dim{opacity:.7}
+.cell.sel{outline:2px solid var(--gold);outline-offset:1px}
+/* The type stands in for the icon the game would draw — it gives the cell a middle, and it is the
+   word a `Type` rule is written against. */
+.cell .ty{position:relative;margin:auto 0;text-align:center;font-size:9px;letter-spacing:1.4px;
+  text-transform:uppercase;color:rgba(255,255,255,.34);text-shadow:0 1px 3px #000}
+.cell.lit .ty{color:rgba(255,255,255,.5)}
+.cell .nm{position:relative;font-size:11px;line-height:1.2;color:var(--ink);
+  text-shadow:0 1px 3px #000,0 0 6px #000;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cell.lit .nm{font-weight:600}
+.cell .foot{position:relative;display:flex;align-items:center;gap:5px;margin-top:2px;
+  font:9.5px var(--mono);text-shadow:0 1px 2px #000}
+.cell .foot .rf{color:var(--gold)}
+.cell .foot .tp{color:var(--warn);margin-left:auto}
+.cell .fav{position:absolute;left:4px;top:4px;width:5px;height:5px;border-radius:50%;background:#e05a7a;
+  box-shadow:0 0 5px #e05a7a}
+.cell .tag{position:absolute;left:0;right:0;top:0;font-size:8px;font-weight:700;letter-spacing:.5px;
+  text-align:center;padding:1.5px 0;background:var(--c);color:#0b0e0d;text-transform:uppercase}
+
+/* Hover note — the line the mod appends to the game's own tooltip, plus what the snapshot knows. */
+#note{position:fixed;z-index:50;pointer-events:none;max-width:330px;padding:8px 11px;
+  background:#0a0d0c;border:1px solid var(--line2);border-radius:4px;box-shadow:0 14px 34px rgba(0,0,0,.7);
+  font-size:12px;display:none}
+#note .modline{font-size:12.5px;margin-bottom:6px}
+#note .modline b{font-weight:700}
+#note .modline em{font-style:normal;color:var(--faint)}
+#note h4{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--ink)}
+#note .meta{color:var(--faint);font-size:11px;margin-bottom:5px}
+#note .st{font:11px/1.55 var(--mono);color:var(--dim)}
+#note .st u{text-decoration:none;color:var(--warn)}
+#note .st s{text-decoration:none;color:var(--bad)}
+#note .rollhi{color:var(--gold)}
+
+/* Item action strip, from clicking a cell */
+#act{flex:none;border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;display:none}
+#act.on{display:block}
+#act .top{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+#act h3{margin:0;font-size:14px;font-weight:600}
+#act .meta{color:var(--faint);font-size:11.5px;font-variant-numeric:tabular-nums}
+#act .row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+#act .lbl{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--faint);margin-right:2px}
+.mk{background:#141a17;border:1px solid var(--line2);border-radius:4px;color:var(--dim);
+  padding:4px 9px;font:11.5px var(--mono)}
+.mk:hover{border-color:var(--gold-dim);color:var(--ink)}
+.mk b{color:var(--gold);font-weight:600}
+
+/* ─────────────── the cascade ─────────────── */
+.cascade{padding:8px 10px 40px}
+.casnote{color:var(--faint);font-size:11.5px;line-height:1.55;padding:2px 6px 10px}
+.rule{position:relative;margin-bottom:3px;border:1px solid transparent;border-radius:4px;background:var(--slot)}
+.rule.open{border-color:var(--line2);background:#161d19}
+.rule.broken{border-color:rgba(226,105,95,.5)}
+.rule.drop-before:before,.rule.drop-after:after{content:"";position:absolute;left:0;right:0;height:2px;background:var(--gold)}
+.rule.drop-before:before{top:-3px}
+.rule.drop-after:after{bottom:-3px}
+.rule.dragging{opacity:.35}
+.rhead{display:flex;align-items:center;gap:9px;padding:7px 9px;width:100%;background:transparent;border:0;
+  color:inherit;text-align:left}
+.rhead:hover{background:rgba(255,255,255,.025)}
+/* The number IS the emphasis: first match wins, so priority is the fact the eye should land on. */
+.ord{flex:none;width:22px;height:22px;border-radius:3px;display:grid;place-items:center;cursor:grab;
+  font:11px var(--mono);font-weight:700;color:var(--faint);background:var(--sunk);border:1px solid var(--line)}
+.rule.open .ord,.rule:hover .ord{color:var(--gold);border-color:var(--gold-dim)}
+.ord:active{cursor:grabbing}
+.swatch{flex:none;width:11px;height:11px;border-radius:2px;background:var(--c);box-shadow:0 0 7px -1px var(--c)}
+.swatch.lv1{opacity:.45;box-shadow:none}
+.rname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rule.hide .rname{color:var(--dim)}
+.rule.hide .swatch{background:var(--line2);box-shadow:none}
+.rcount{flex:none;font:11.5px var(--mono);color:var(--dim);font-variant-numeric:tabular-nums}
+.rcount.zero{color:var(--bad)}
+.rcount.na{color:var(--faint)}
+.rcount.big{color:var(--gold)}
+.share{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent}
+.share i{display:block;height:100%;background:var(--c);opacity:.6}
+.rverb{flex:none;font:9px var(--mono);font-weight:700;letter-spacing:.6px;color:var(--faint);
+  border:1px solid var(--line);border-radius:2px;padding:1px 4px}
+.rule.hide .rverb{color:var(--dim)}
+
+.rbody{padding:2px 10px 11px 40px;border-top:1px solid var(--line)}
+.warn{margin:8px 0 0;padding:7px 10px;border-left:2px solid var(--warn);background:rgba(224,167,46,.06);
+  color:var(--dim);font-size:12px;line-height:1.55}
+.warn b{color:var(--ink)}
+.warn.dead{border-left-color:var(--bad);background:rgba(226,105,95,.07)}
+.warn.dead b{color:var(--bad)}
+.warn button{margin-left:6px}
+.crumbs{font:11.5px/1.6 var(--mono);color:#9fd2ff;padding:8px 0 2px;cursor:text}
+.crumbs span{color:var(--faint)}
+.crumbs em{color:var(--faint);font-style:italic}
+.fieldrow{display:flex;align-items:center;gap:8px;margin-top:9px;min-height:24px}
+.fieldrow>.lbl{flex:none;width:62px;font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+/* Collapsed pickers: one chip shows the CURRENT value, clicking opens the choices. */
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--sunk);border:1px solid var(--line);
+  border-radius:3px;padding:3px 8px;color:var(--ink);font-size:12px}
+.chip:hover{border-color:var(--gold-dim)}
+.chip .dot{width:11px;height:11px;border-radius:2px;background:var(--c)}
+.chip .hex{font:10.5px var(--mono);color:var(--faint)}
+.popout{margin-top:7px;padding:8px;background:var(--sunk);border:1px solid var(--line);border-radius:4px}
+.pal{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.pal button{width:22px;height:22px;border-radius:3px;border:1px solid rgba(0,0,0,.5);padding:0}
+.pal button.on{box-shadow:0 0 0 2px var(--ink)}
+.pal .any{position:relative;overflow:hidden;background:conic-gradient(#e2695f,#e0a72e,#4ade80,#7cc0ff,#c4a5ff,#e2695f)}
+.pal .any input{position:absolute;inset:-4px;opacity:0;cursor:pointer;border:0;padding:0}
+.pal .hint{font-size:11px;color:var(--faint);margin-left:4px}
+/* Intensity, drawn as the cell it produces — "dot / mark / glow" are three pictures. */
+.lvls{display:flex;gap:7px}
+.lvl{position:relative;width:52px;padding:0 0 3px;background:transparent;border:0;color:var(--faint);font-size:9.5px;
+  letter-spacing:.6px;text-transform:uppercase}
+.lvl .demo{display:block;height:34px;border-radius:3px;border:1px solid #263029;margin-bottom:4px;position:relative;
+  background:linear-gradient(160deg,#1a211d,#101512);overflow:hidden}
+.lvl .demo:after{content:"";position:absolute;inset:0;background:var(--c);opacity:0}
+.lvl[data-l="dot"] .demo:after{opacity:.28}
+.lvl[data-l="mark"] .demo:after{opacity:.62}
+.lvl[data-l="glow"] .demo:after{opacity:1}
+.lvl[data-l="mark"] .demo{border-color:var(--c)}
+.lvl[data-l="glow"] .demo{border-color:var(--c);animation:pulse 1.5s ease-in-out infinite}
+.lvl.on{color:var(--gold)}
+.lvl.on .demo{outline:1px solid var(--gold);outline-offset:2px}
+.snds{display:flex;gap:5px;flex-wrap:wrap}
+.snds button{background:var(--slot);border:1px solid var(--line);border-radius:3px;color:var(--dim);
+  padding:4px 9px;font-size:12px}
+.snds button.on{border-color:var(--gold-dim);color:var(--gold)}
+.snds button:hover{color:var(--ink)}
+.snds .own{display:flex;gap:5px;align-items:center;width:100%;margin-top:6px;font-size:11px;color:var(--faint)}
+.snds .own input{flex:1;background:var(--sunk);border:1px solid var(--line);border-radius:3px;color:var(--ink);
+  font:11.5px var(--mono);padding:3px 6px}
+.snds .own input:focus{outline:none;border-color:var(--gold-dim)}
+.catches{margin-top:10px;border-top:1px solid var(--line);padding-top:7px}
+.crow{display:flex;align-items:center;gap:7px;padding:2px 4px;border-radius:3px;font-size:12px}
+.crow:hover{background:rgba(255,255,255,.03)}
+.crow .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow .r{margin-left:auto;display:flex;gap:7px;font:10.5px var(--mono);color:var(--faint);white-space:nowrap}
+.crow .r u{text-decoration:none;color:var(--warn)}
+.crow .st{font:10px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.empty{color:var(--faint);font-style:italic;font-size:12px;padding:6px 4px}
+.addrow{display:flex;gap:6px;flex-wrap:wrap;padding:12px 6px 0;border-top:1px solid var(--line);margin-top:12px}
+.addrow .lbl{align-self:center;font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.addrow button{background:transparent;border:1px dashed var(--line2);border-radius:3px;color:var(--dim);
+  padding:4px 9px;font-size:11.5px}
+.addrow button:hover{border-color:var(--gold-dim);color:var(--ink)}
+.ovr{display:flex;align-items:center;gap:8px;padding:3px 6px;font-size:12px}
+.ovr .v{font:9px var(--mono);font-weight:700;letter-spacing:.5px;width:46px;color:var(--gold)}
+.ovr .v.q{color:var(--faint)}
+.ovr span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+h3.sec{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint);margin:16px 0 5px;padding:0 6px;font-weight:600}
+
+/* ─────────────── text pane ─────────────── */
+.edit{position:relative;flex:1;min-height:0;overflow:hidden}
+.edit pre,.edit textarea{margin:0;position:absolute;inset:0;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font:12.5px/1.65 var(--mono);padding:10px 12px 10px 42px;border:0;tab-size:4}
+.edit pre{pointer-events:none;color:var(--ink)}
+.edit textarea{background:transparent;color:transparent;caret-color:var(--gold);resize:none;outline:none}
+.edit textarea::selection{background:rgba(200,169,97,.25)}
+.ln{min-height:1.65em}
+.gutter{position:absolute;left:0;top:0;bottom:0;width:33px;background:var(--sunk);border-right:1px solid var(--line);
+  pointer-events:none;overflow:hidden}
+.gutter i{position:absolute;right:6px;font:12.5px/1.65 var(--mono);color:var(--faint);font-style:normal}
+.gutter i.bad{color:var(--bad);font-weight:700}
+.gutter i.head{color:var(--gold-dim)}
+.marks{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.emark{position:absolute;right:9px;max-width:66%;font:11px/1.65 var(--mono);color:#ffd9d5;
+  background:rgba(102,32,28,.9);border:1px solid rgba(226,105,95,.6);border-radius:3px;padding:0 6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emark.mod{color:#ffe9bd;background:rgba(96,70,14,.9);border-color:rgba(224,167,46,.6)}
+.k-show{color:#5fd08a;font-weight:600}
+.k-hide{color:var(--dim);font-weight:600}
+.k-deco{color:var(--gold)}
+.k-cond{color:#8fc4ef}
+.k-num{color:var(--warn)}
+.k-str{color:#e8c89a}
+.k-com{color:var(--faint);font-style:italic}
+/* The `%` teaching line: it lives under the caret, not in a help panel. */
+#coach{flex:none;border-top:1px solid var(--line);background:var(--sunk);padding:7px 12px;font-size:11.5px;
+  color:var(--dim);line-height:1.6;display:none}
+#coach.on{display:block}
+#coach .two{display:flex;gap:18px;flex-wrap:wrap;margin-top:4px}
+#coach .two div{font:11.5px var(--mono)}
+#coach b{color:var(--ink)}
+#coach .q{color:var(--gold)}
+#coach .v{color:#8fc4ef}
+#coach .n{color:var(--warn);font-variant-numeric:tabular-nums}
+.ac{position:absolute;z-index:30;background:#0a0e0c;border:1px solid var(--line2);border-radius:4px;
+  box-shadow:0 14px 32px rgba(0,0,0,.65);max-height:230px;overflow:auto;min-width:250px;padding:3px}
+.ac div{padding:4px 8px;border-radius:3px;cursor:pointer;display:flex;gap:8px;align-items:center;font-size:12px}
+.ac div.on{background:rgba(200,169,97,.14)}
+.ac b{font-weight:600;color:var(--ink);font-family:var(--mono);font-size:11.5px}
+.ac .help{color:var(--faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac .meta{margin-left:auto;color:var(--gold-dim);font-size:10.5px;flex:none}
+.txtfoot{flex:none;display:flex;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--faint)}
+
+/* ─────────────── help pane ─────────────── */
+.help{padding:14px 16px 40px;font-size:13px;line-height:1.7;color:var(--dim);max-width:70ch}
+.help h3{color:var(--ink);font-size:12px;letter-spacing:1.2px;text-transform:uppercase;margin:20px 0 6px}
+.help h3:first-child{margin-top:0}
+.help code{font:12px var(--mono);color:var(--gold);background:var(--sunk);padding:1px 5px;border-radius:3px}
+.help b{color:var(--ink)}
+.help table{border-collapse:collapse;width:100%;margin:6px 0}
+.help td{padding:3px 8px 3px 0;vertical-align:top;font-size:12.5px}
+.help td:first-child{font:12px var(--mono);color:#8fc4ef;white-space:nowrap;width:1%}
+
+/* ─────────────── footer ─────────────── */
+/* Wraps rather than crushes: the save message and the disclosure both have to stay readable, and a
+   narrow window is not a reason for either one to be the half that gets clipped. */
+footer{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 14px;
+  border-top:1px solid var(--line);background:var(--panel);font-size:12px;color:var(--dim);min-height:34px}
+footer.bad{color:var(--bad)}
+footer.good{color:#7fc99a}
+footer .path{margin-left:auto;font:11px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/**
+ * Its own colour, and readable rather than faint.
+ *
+ * It keeps a colour of its own because a failed save turns the footer red and must not recolour a
+ * statement of fact about the socket. It is set at `--dim` and boxed rather than dropped to `--faint`
+ * because it is a DISCLOSURE: the smallest, quietest thing in the window is not where you put the
+ * sentence a suspicious player has to be able to find.
+ */
+.conn{display:none;align-items:center;gap:7px;margin-left:auto;font-size:11.5px;color:var(--dim);
+  padding:2px 9px;border:1px solid var(--line);border-radius:99px;background:var(--sunk)}
+.conn.on,.conn.lost{display:flex}
+.conn i{flex:none;width:6px;height:6px;border-radius:50%;background:#5f8a6d;box-shadow:0 0 6px #5f8a6d}
+.conn b{font:11.5px var(--mono);font-weight:600;color:var(--ink)}
+.conn em{font-style:normal;color:var(--faint)}
+.conn.lost{color:var(--warn);border-color:rgba(224,167,46,.4);background:rgba(224,167,46,.07)}
+.conn.lost i{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+.conn.lost b{color:var(--warn)}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="in">
+    <h1>ValeLoot</h1>
+    <p class="sub">loot filter editor · the manual way in</p>
+    <p class="f8">The easy way is <b>F8</b>. Start the game, press <b>F8</b>, and ValeLoot opens this
+      same editor in your browser with your rules, your bag and every item name already loaded —
+      no folder to choose and no file to find. This screen is what you get when you opened the file
+      by hand: it is the fallback for a blocked port, or for writing rules with the game shut.</p>
+    <p>Your rules live in one text file inside your game folder. ValeLoot reads that file and paints
+      your bag from it. To edit the rules here, this page needs to see the folder they are in —
+      <code>SpiritVale/BepInEx/config</code>.</p>
+    <button class="pick" id="pickdir">Choose your <code>BepInEx/config</code> folder
+      <span>Remembered for as long as this tab is open. Nothing leaves your machine: opened this way
+        the page talks to nothing at all, and works with the wifi off.</span></button>
+    <p class="orline" id="orline">or, without granting a folder</p>
+    <div class="manual">
+      <label><b>valeloot-filter.txt</b>your rules<input type="file" id="fileFilter" accept=".txt,text/plain"></label>
+      <label><b>valeloot-items.txt</b>names to autocomplete<input type="file" id="fileItems" accept=".txt,text/plain"></label>
+      <label><b>valeloot-bag.txt</b>your bag, for the preview<input type="file" id="fileBag" accept=".txt,text/plain"></label>
+    </div>
+    <div class="caveat" id="gatecaveat"></div>
+  </div>
+</div>
+
+<header>
+  <span class="brand">ValeLoot <em>filter</em></span>
+  <div class="files" id="filestate"></div>
+  <span class="grow"></span>
+  <button class="btn tiny" id="reload" title="re-read all three files from the folder">re-read</button>
+  <button class="btn tiny" id="download" title="save a copy of the filter text to your downloads">download</button>
+  <button class="btn save" id="save">Save to the game</button>
+</header>
+
+<main>
+  <section class="rail">
+    <div class="tabs">
+      <button data-tab="rules" class="on">Rules</button>
+      <button data-tab="text">Text</button>
+      <button data-tab="help">Guide</button>
+      <span class="grow"></span>
+      <span class="cnt" id="tabcnt"></span>
+    </div>
+    <div class="pane on" id="pane-rules"><div class="cascade" id="cascade"></div></div>
+    <div class="pane flat" id="pane-text">
+      <div class="edit">
+        <div class="gutter"><div id="gutin"></div></div>
+        <pre id="hl" aria-hidden="true"></pre>
+        <div class="marks"><div id="markin"></div></div>
+        <textarea id="src" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="soft"
+                  aria-label="loot filter text"></textarea>
+      </div>
+      <div id="coach"></div>
+      <div class="txtfoot"><span>ctrl+space suggests</span><span class="grow"></span>
+        <button class="btn tiny" id="tidy" title="reprint the compiled rules — drops comments">tidy</button></div>
+    </div>
+    <div class="pane" id="pane-help"><div class="help" id="helpbody"></div></div>
+  </section>
+
+  <section class="stage">
+    <div class="stagehead">
+      <h2>your bag, as the filter paints it</h2>
+      <div class="tally" id="tally"></div>
+    </div>
+    <div class="gridwrap"><div class="grid" id="grid"></div></div>
+    <div id="act"></div>
+  </section>
+</main>
+
+<!--
+  `#conn` is the connection disclosure, and it lives here on purpose.
+
+  This page now has a mode in which the mod is serving it over a real HTTP socket, and a player who
+  cannot see that has been told something untrue by omission. So it is a fixed line of the window
+  chrome — never a toast, never behind the Guide tab — for exactly as long as the socket is what is
+  feeding the page. In file mode it renders nothing, because then there is nothing to disclose.
+-->
+<footer id="foot"><span id="footmsg">starting…</span><span class="path" id="footpath"></span><span
+  class="conn" id="conn"></span></footer>
+<div id="note"></div>
+
+<script>
+/*@@PARSER@@*/
+</script>
+
+<script>
+'use strict';
+/**
+ * The page. Everything below is plain browser JS in a real .html file — deliberately NOT a string
+ * inside a .ts template literal, because a stray backtick in an inline script silently ends the
+ * literal and doubles the escape depth of everything after it.
+ */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const FILTER_FILE = 'valeloot-filter.txt';
+const ITEMS_FILE = 'valeloot-items.txt';
+const BAG_FILE = 'valeloot-bag.txt';
+
+/** Ten colours that stay apart from each other on a dark inventory cell. A swatch cannot be mistyped. */
+const PALETTE = ['#4ade80', '#7cc0ff', '#c4a5ff', '#f0b429', '#ef6f6f', '#ff9f6b', '#5eead4', '#f472b6', '#e6efe9', '#9aa8a0'];
+const SHOW_DEFAULT_COLOR = '#4ade80';
+const HIDE_DEFAULT_COLOR = '#6b7a73';
+/** What `AlwaysShow` looks like in game: InventoryPaint.PinnedMark — glow, #facc15, tag PINNED. */
+const PIN_COLOR = '#facc15';
+const LEVELS = [
+  ['dot', 'the cell takes the colour, quietly'],
+  ['mark', 'clearly lit — worth a second look'],
+  ['glow', 'unmistakable, and it pulses'],
+];
+
+const KEYWORDS = [
+  ['Show', 'present matching items — colour, tag, intensity, sound'],
+  ['Hide', 'claim matching items, then say nothing about them'],
+  ['AlwaysShow', 'always light this item up, by name — beats every rule'],
+  ['AlwaysHide', 'never light this item, by name — beats every rule'],
+  ['Threshold', 'what counts as a top roll, e.g. 90 — once, at the top'],
+];
+const CONDITIONS = [
+  ['Name', 'the item name contains this'],
+  ['Type', 'item type(s), comma separated'],
+  ['Stat', 'Agi >= 3 (the printed value) or Agi >= 90% (roll quality)'],
+  ['AvgRoll', 'average roll %, e.g. < 35'],
+  ['TopRolls', 'how many lines are top rolls, e.g. >= 2'],
+  ['Refine', 'refine level, e.g. >= 1 — minimum only'],
+  ['Favorite', "the game's own favourite flag"],
+  ['NotFavorite', 'everything you have not flagged'],
+  ['OverRoll', 'a line above its normal maximum — only a chaos widen does that'],
+  ['NoOverRoll', 'no line above its maximum'],
+  ['Chaos', 'has a chaos substat'],
+  ['NoChaos', 'has no chaos substat'],
+  ['AnyStat', 'match ANY listed stat (default: every one)'],
+  ['AllStats', 'match every listed stat'],
+  ['Tag', 'short label drawn on the cell'],
+  ['Highlight', 'dot, mark or glow'],
+  ['Sound', 'plays as one lands'],
+  ['Color', '#rrggbb'],
+];
+
+/**
+ * Conditions the language has and ValeLoot REFUSES, with the mod's own reason.
+ *
+ * The bundled parser is the language's full grammar, and parts of it assume a reference catalog and
+ * your worn set. The mod has neither, and rather than answering a different question it rejects the
+ * block whole — so a filter carrying one of these lines has a rule that silently does not run in
+ * game. Reported here as a hard error for the same reason the mod reports it: a rule that looks
+ * enabled and is not is the most expensive kind of mistake this file can hold.
+ */
+const MOD_REFUSES = {
+  sharedstats: 'SharedStats compares against the gear you are wearing, which ValeLoot does not read — remove the line',
+  unknown: 'Unknown asks whether a reference catalog is missing this item. ValeLoot reads the game\u2019s OWN catalog, so there is nothing to filter on — remove the line',
+  known: 'Known asks whether a reference catalog is missing this item. ValeLoot reads the game\u2019s OWN catalog, so there is nothing to filter on — remove the line',
+  verdict: 'Verdict asks for an upgrade comparison against your worn gear, which ValeLoot does not do — remove the line',
+};
+/** Block openers the grammar still accepts and the mod never did. */
+const MOD_REFUSES_HEAD = {
+  dismantle: 'Dismantle is an old spelling ValeLoot does not read — write Hide instead',
+  alwaysdismantle: 'AlwaysDismantle is an old spelling ValeLoot does not read — write AlwaysHide instead',
+};
+/** Conditions the mod runs but valeloot-bag.txt cannot describe, so the preview must not guess. */
+const SNAPSHOT_BLIND = {
+  hasChaos: 'the chaos slot — valeloot-bag.txt version 1 does not record which line is the chaos substat',
+};
+
+// ─────────────────────────────── state ───────────────────────────────
+/**
+ * 'served' — the mod handed this page to the browser and answers on loopback. 'file' — the page was
+ * opened from the filesystem and works through the File System Access API, which is where it started
+ * and what it falls back to. Decided once by `probeServed`, never inferred from the url.
+ */
+let mode = 'file';
+let served = { port: null, version: null, coverage: null, catalogReady: true, lost: false };
+/**
+ * Why Save is unavailable, when the reason is not the filter's own errors.
+ *
+ * Set when the mod is up but could not hand over the rules. The editor then holds a buffer nobody
+ * authored, and writing that over a file that merely could not be READ is the one destructive thing
+ * this page is able to do.
+ */
+let saveHeld = null;
+let dirHandle = null;          // the granted BepInEx/config folder, or null
+let filterName = FILTER_FILE;  // what a save writes to
+let vocab = { items: [], stats: [], types: [] };
+let bag = { items: [], threshold: null, stamp: null, loaded: false };
+let plan = null;               // the last evaluation: rules, marks, counts
+let openRule = null;           // the one expanded accordion row
+let openPicker = null;         // 'color' | 'level' | 'sound' inside the open row
+let selectedUid = null;
+let focusRule = null;          // where the keyboard should land after a reorder
+let fileState = { filter: null, items: null, bag: null };
+
+const src = $('src');
+
+// ─────────────────────────── the filter text ──────────────────────────
+const STARTER = [
+  '# ValeLoot rules. First match wins, so the loudest things go at the top.',
+  '',
+  'Show "Triple top roll"',
+  '    TopRolls  >= 3',
+  '    Color     #f0b429',
+  '    Tag       TRIPLE',
+  '    Highlight glow',
+  '    Sound     chime',
+  '',
+  'Show "Keepers"',
+  '    TopRolls  >= 2',
+  '    Highlight mark',
+  '',
+  'Hide "vendor trash"',
+  '    AvgRoll   < 35',
+  '    TopRolls  < 1',
+  '',
+].join('\n');
+
+// ───────────────────── block segmentation (the text IS the model) ─────────────────────
+/**
+ * Split the text into blocks the way the parser does, so a row edits ONE block's lines in place and
+ * leaves every other byte alone. That is why comments, blank lines and ordering survive a colour
+ * change, and why there is no picker state to reconcile with the file.
+ */
+const BLOCK_WORDS = { show: 'show', keep: 'show', hide: 'hide', mute: 'hide', dismantle: 'hide' };
+const OVERRIDE_WORDS = { alwaysshow: 1, alwayskeep: 1, alwayshide: 1, alwaysmute: 1, alwaysdismantle: 1 };
+const COMMENT_RE = /(^|\s)#(?![0-9a-fA-F]{6}\b).*$/;
+const unquote = (v) => (v.length >= 2 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v);
+
+function parseBlocks(text) {
+  const lines = text.split('\n');
+  const blocks = [];
+  let current = null;
+  for (let i = 0; i < lines.length; i++) {
+    const stripped = lines[i].replace(COMMENT_RE, '$1');
+    const trimmed = stripped.trim();
+    if (!trimmed) continue;
+    const indented = /^\s/.test(stripped);
+    const words = trimmed.split(/\s+/);
+    const key = words[0].toLowerCase();
+    const rest = words.slice(1).join(' ').trim();
+    if (OVERRIDE_WORDS[key] || key === 'threshold') { current = null; continue; }
+    const kind = BLOCK_WORDS[key];
+    if (!indented && kind) {
+      current = { kind, name: unquote(rest) || kind, head: i, start: i, end: i, body: [], deco: {} };
+      // A comment sitting directly above an opener explains the rule below it, so it travels with it.
+      let above = i - 1;
+      while (above >= 0 && /^\s*#/.test(lines[above])) { current.start = above; above--; }
+      blocks.push(current);
+      continue;
+    }
+    if (!current) continue;
+    current.body.push({ line: i, key, rest, text: trimmed });
+    current.end = i;
+  }
+  for (const block of blocks) for (const line of block.body) block.deco[line.key] = line;
+  return blocks;
+}
+
+function blockColor(block) {
+  const line = block.deco.color || block.deco.colour;
+  if (line && /^#[0-9a-fA-F]{6}$/.test(line.rest)) return line.rest.toLowerCase();
+  return block.kind === 'hide' ? HIDE_DEFAULT_COLOR : SHOW_DEFAULT_COLOR;
+}
+function blockLevel(block) {
+  if (block.deco.flash) return 'glow';
+  const line = block.deco.highlight;
+  const wanted = line ? line.rest.toLowerCase() : 'dot';
+  return LEVELS.some(([name]) => name === wanted) ? wanted : 'dot';
+}
+
+// ───────────────────── lint: what the MOD will refuse ─────────────────────
+function modLint(text) {
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const stripped = lines[i].replace(COMMENT_RE, '$1');
+    const trimmed = stripped.trim();
+    if (!trimmed) continue;
+    const words = trimmed.split(/\s+/);
+    const key = words[0].toLowerCase();
+    const rest = words.slice(1).join(' ').trim();
+    if (MOD_REFUSES_HEAD[key] && !/^\s/.test(stripped)) {
+      out.push({ line: i + 1, text: trimmed, message: MOD_REFUSES_HEAD[key], mod: true });
+      continue;
+    }
+    if (MOD_REFUSES[key]) { out.push({ line: i + 1, text: trimmed, message: MOD_REFUSES[key], mod: true }); continue; }
+    // A maximum refine: the overlay drops it silently (which WIDENS the block to everything), the
+    // mod refuses it. Refusing is right, so this editor refuses too.
+    if (key === 'refine' && /^<=?\s*-?\d/.test(rest)) {
+      out.push({
+        line: i + 1, text: trimmed, mod: true,
+        message: 'Refine takes a minimum only (>=, > or =) — ValeLoot refuses a maximum, and the overlay would drop it and match everything',
+      });
+    }
+  }
+  return out;
+}
+
+// ───────────────────── the bag snapshot ─────────────────────
+/**
+ * ONE item, built from EITHER source.
+ *
+ * There are two ways this page gets a bag now — the mod's own `/api/state` JSON when the mod is
+ * serving this page over loopback, and the TSV `valeloot-bag.txt` when the page was opened as a
+ * file — and they must produce the SAME item, or every renderer below has to learn the difference.
+ * So each reader decodes only its own transport, down to the same middle shape
+ * `{ uid, itemId, name, type, refine, favorite, topRolls, avgRoll, lines: [{ stat, roll, printed }] }`,
+ * and this is the ONLY place that turns that into what the bundled matcher takes. One reader gaining
+ * a field it forgot to normalise is the bug this arrangement exists to make impossible.
+ *
+ * The roll is NOT clamped to 100 — the game itself lets a chaos widen exceed the cap, and a roll
+ * above 100 is exactly what `OverRoll` asks about.
+ */
+function bagItem(raw, index) {
+  const lines = [];
+  for (const entry of raw.lines || []) {
+    const roll = Number(entry.roll);
+    const shown = entry.printed === null || entry.printed === undefined ? NaN : Number(entry.printed);
+    const printed = Number.isFinite(shown) ? shown : null;
+    lines.push({
+      index: lines.length,
+      stat: String(entry.stat),
+      // `base` is what `Stat Agi >= 3` compares. With no printed value the line cannot satisfy a
+      // value bound, and -Infinity is the only honest stand-in: it fails every minimum rather than
+      // passing one it was never measured against.
+      base: printed === null ? -Infinity : printed,
+      printed,
+      q: '',
+      rollPct: Number.isFinite(roll) ? roll : null,
+      // Neither source records which line is the chaos substat. Never guessed — a rule asking about
+      // it is reported as unanswerable instead of quietly counting zero.
+      isChaos: false,
+      over: Number.isFinite(roll) && roll > 100,
+    });
+  }
+  const avg = raw.avgRoll === null || raw.avgRoll === undefined ? NaN : Number(raw.avgRoll);
+  return {
+    wireIndex: index,
+    uid: raw.uid || null,
+    itemId: raw.itemId || '',
+    // "Could not say" is a real answer from both sources, including for the name and the type. Left
+    // as nothing for matching (a rule cannot sensibly name an item the mod could not name either)
+    // but given something readable to draw in a cell.
+    name: raw.name || '(unnamed)',
+    slotType: raw.type || '',
+    slot: null,
+    refine: Number(raw.refine) || 0,
+    favorite: raw.favorite === true || raw.favorite === 1 || raw.favorite === '1',
+    // What the mod counted, against the threshold it counted at. `evaluate` recounts it when the
+    // filter being edited asks for a different one — see there.
+    topRolls: Number(raw.topRolls) || 0,
+    avgRoll: Number.isFinite(avg) ? avg : null,
+    cards: [],
+    lines,
+    luck: { p: null, oneIn: null },
+    worn: false,
+    score: 0,
+  };
+}
+
+/**
+ * Reader one: `valeloot-bag.txt` version 1 — what a page opened from the filesystem gets.
+ *
+ * TAB separated, nine columns, `#` comments; `-` means "the mod could not supply this".
+ */
+function parseBag(text) {
+  const items = [];
+  let threshold = null;
+  let stamp = null;
+  let version = null;
+  let malformed = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (!line.trim()) continue;
+    if (line.startsWith('#')) {
+      const body = line.slice(1).trim();
+      // Matched on prefix, not on line index: the header carries prose that is free to move.
+      if (/^version\s/i.test(body)) version = Number(body.slice(7).trim());
+      else if (/^threshold\s/i.test(body)) threshold = Number(body.slice(9).trim());
+      else if (/^generated:/i.test(body)) stamp = body.slice(10).trim();
+      continue;
+    }
+    const cols = line.split('\t');
+    if (cols.length < 9) { malformed++; continue; }
+    const dash = (value) => (value === '-' || value === '' || value === undefined ? null : value);
+    const lines = [];
+    if (dash(cols[8])) {
+      for (const entry of cols[8].split(',')) {
+        const bits = entry.split(':');
+        if (bits.length < 2) continue;
+        lines.push({ stat: bits[0], roll: bits[1], printed: dash(bits[2]) });
+      }
+    }
+    items.push(bagItem({
+      uid: dash(cols[0]), itemId: dash(cols[1]), name: dash(cols[2]), type: dash(cols[3]),
+      refine: cols[4], favorite: cols[5] === '1', topRolls: cols[6], avgRoll: dash(cols[7]), lines,
+    }, items.length));
+  }
+  // `countedAt` is which threshold the `topRolls` column currently answers for; `evaluate` moves it.
+  return { items, threshold, countedAt: threshold, stamp, version, malformed, loaded: true };
+}
+
+/**
+ * Reader two: the `bag` half of `/api/state` — what a page the mod served gets.
+ *
+ * `generated` is the mod's own projection time and is preferred, because it answers the question the
+ * re-read control is actually asked: was this bag taken AFTER I looted? The page's read time is the
+ * fallback for a payload that does not carry one — never a substitute for one that does.
+ */
+function bagFromState(state) {
+  const rows = Array.isArray(state.bag) ? state.bag : [];
+  const given = Number(state.threshold);
+  const threshold = Number.isFinite(given) ? given : null;
+  const generated = typeof state.generated === 'string' && state.generated.trim() ? state.generated.trim() : null;
+  return {
+    items: rows.map((row, index) => bagItem(row, index)),
+    threshold,
+    countedAt: threshold,
+    stamp: generated || 'read ' + new Date().toLocaleTimeString(),
+    version: 1,
+    malformed: 0,
+    loaded: true,
+  };
+}
+
+/**
+ * Parse `valeloot-items.txt` — the mod's generated reference — into an autocomplete vocabulary.
+ *
+ * Fixed-width columns under a `== Type ==` heading. The widths are padding, not a guarantee: a name
+ * of 40 characters or more pushes the rest of the row along, so the id is taken as the last token
+ * and the remainder split on runs of two-or-more spaces rather than by byte offset.
+ */
+function parseItems(text) {
+  const items = [];
+  const stats = [];
+  const types = [];
+  let section = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const heading = /^==\s*(.+?)\s*==$/.exec(line.trim());
+    if (heading) {
+      section = heading[1];
+      if (section !== 'Stats' && section !== '(no type)') types.push(section);
+      continue;
+    }
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (section === 'Stats') { stats.push(line.trim()); continue; }
+    if (section === null) continue;
+    const row = line.replace(/^\s+/, '');
+    if (/^Lv\s+Name/.test(row)) continue;
+    const head = /^(\d+)\s+(.*)$/.exec(row);
+    if (!head) continue;
+    const level = Number(head[1]);
+    const rest = head[2].trimEnd();
+    const lastSpace = rest.lastIndexOf(' ');
+    if (lastSpace < 0) continue;
+    const id = rest.slice(lastSpace + 1);
+    const middle = rest.slice(0, lastSpace).trimEnd();
+    const parts = middle.split(/\s{2,}/);
+    items.push({ name: parts[0].trim(), set: parts.slice(1).join(' ').trim(), type: section, level, id });
+  }
+  return { items, stats, types };
+}
+
+/**
+ * The same vocabulary, from the `items` and `stats` halves of `/api/state`.
+ *
+ * `types` is DERIVED from the distinct item types rather than sent, because that is what the file
+ * reader does too — it reads them off the `== Type ==` headings — and a payload field the mod had to
+ * keep in step with its own item list would be a second source of truth for no gain.
+ */
+function vocabFromState(state) {
+  const items = [];
+  const types = [];
+  for (const row of Array.isArray(state.items) ? state.items : []) {
+    const type = String(row.type || '');
+    items.push({
+      name: String(row.name || ''),
+      set: String(row.set || ''),
+      type,
+      level: Number(row.level) || 0,
+      id: String(row.id || ''),
+    });
+    if (type && !types.includes(type)) types.push(type);
+  }
+  return { items, types, stats: (Array.isArray(state.stats) ? state.stats : []).map((s) => String(s)) };
+}
+
+// ───────────────────── evaluation: what the bag will look like ─────────────────────
+/**
+ * Run the bundled matcher over the snapshot, in the mod's own precedence.
+ *
+ * `InventoryPaint.Judge`: AlwaysHide wins over everything, then AlwaysShow (drawn glow #facc15 with
+ * the tag PINNED, deliberately not the palette of whatever rule it skipped), then the rules in file
+ * order, first match wins, and a Hide match draws nothing.
+ */
+function evaluate(text) {
+  const parsed = VL.parseLootFilter(text);
+  const lint = modLint(text);
+  const errors = parsed.errors.concat(lint).sort((a, b) => a.line - b.line);
+  const blocks = parseBlocks(text);
+
+  /**
+   * Bind each block to the rule it compiled to.
+   *
+   * Two different rejections, and conflating them mis-binds every rule after the first lint error.
+   * The PARSER drops a block it could not understand, so `parsed.rules` is short by exactly those —
+   * the walk has to skip the same ones it skipped, and no others. The MOD-lint rejections are lines
+   * the parser understood perfectly and ValeLoot will not run: the parser still emitted a rule for
+   * them, so the cursor must still advance past it even though the block is shown as rejected.
+   *
+   * Getting this wrong is silent and total: a `Verdict` line made every rule below it display
+   * another rule's colour, count and caught items, all internally consistent and all wrong.
+   */
+  const parserBad = new Set();
+  const anyBad = new Set();
+  for (let i = 0; i < blocks.length; i++) {
+    for (const error of errors) {
+      if (error.line - 1 < blocks[i].start || error.line - 1 > blocks[i].end) continue;
+      anyBad.add(i);
+      if (!error.mod) parserBad.add(i);
+    }
+  }
+  let next = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    blocks[i].errors = errors.filter((e) => e.line - 1 >= blocks[i].start && e.line - 1 <= blocks[i].end);
+    const compiled = parserBad.has(i) ? null : parsed.rules[next++] || null;
+    blocks[i].rule = anyBad.has(i) ? null : compiled;
+    // What the snapshot cannot answer about this rule. Not a count of zero: a zero the player cannot
+    // tell apart from "no data" is the failure this whole file exists to avoid.
+    blocks[i].blind = blocks[i].rule && blocks[i].rule.when.hasChaos !== undefined
+      ? SNAPSHOT_BLIND.hasChaos : null;
+  }
+
+  const threshold = parsed.threshold !== undefined ? parsed.threshold
+    : (bag.threshold !== null ? bag.threshold : 90);
+  const context = { threshold };
+
+  /**
+   * `topRolls` in the snapshot was counted against the threshold the GAME last loaded.
+   *
+   * Change `Threshold` in the editor and that column is answering a different question, so every
+   * `TopRolls` count on screen would be stale until the player saved and reopened their bag. The
+   * roll values are in the file, so it is recounted here instead — the mod itself rewrites the
+   * column on the pass after a save, which is the same arithmetic.
+   */
+  const recounted = bag.loaded && bag.threshold !== null && threshold !== bag.countedAt;
+  if (recounted) {
+    for (const item of bag.items) {
+      let top = 0;
+      for (const line of item.lines) if (line.rollPct !== null && line.rollPct >= threshold) top++;
+      item.topRolls = top;
+    }
+    bag.countedAt = threshold;
+  }
+  const pins = parsed.overrides.pin.map((v) => v.toLowerCase());
+  const mutes = parsed.overrides.mute.map((v) => v.toLowerCase());
+  const named = (item, list) =>
+    list.includes(String(item.name).toLowerCase()) || list.includes(String(item.itemId).toLowerCase());
+
+  const marks = new Map();
+  const counts = blocks.map(() => 0);
+  const alone = blocks.map(() => 0);
+  const caught = blocks.map(() => []);
+  let lit = 0; let silenced = 0; let untouched = 0; let pinned = 0;
+
+  for (const item of bag.items) {
+    if (named(item, mutes)) {
+      marks.set(item.uid, { kind: 'muted' });
+      silenced++;
+      continue;
+    }
+    if (named(item, pins)) {
+      marks.set(item.uid, { kind: 'pinned', color: PIN_COLOR, level: 'glow', label: 'PINNED', rule: 'always shown' });
+      lit++; pinned++;
+      continue;
+    }
+    let claimed = -1;
+    for (let i = 0; i < blocks.length; i++) {
+      const rule = blocks[i].rule;
+      if (!rule || blocks[i].blind) continue;
+      if (!VL.matchesCondition(item, rule.when, context)) continue;
+      // "This rule alone would take N, but the rules above it already took them" — the shadowing
+      // mistake that makes reordering the fix, and the only one this language makes easy.
+      alone[i]++;
+      if (claimed < 0) claimed = i;
+    }
+    if (claimed < 0) { untouched++; continue; }
+    counts[claimed]++;
+    caught[claimed].push(item);
+    const block = blocks[claimed];
+    const rule = block.rule;
+    if (rule.mute) {
+      marks.set(item.uid, { kind: 'muted', by: claimed });
+      silenced++;
+    } else {
+      marks.set(item.uid, {
+        kind: 'lit', by: claimed, color: blockColor(block), level: blockLevel(block),
+        label: rule.label || '', rule: rule.name,
+      });
+      lit++;
+    }
+  }
+
+  for (let i = 0; i < blocks.length; i++) {
+    blocks[i].count = counts[i];
+    blocks[i].alone = alone[i];
+    blocks[i].caught = caught[i];
+  }
+  return {
+    text, parsed, errors, blocks, marks, threshold,
+    total: bag.items.length, lit, silenced, untouched, pinned,
+    // One blind rule makes every count BELOW it a guess, because the items it would have taken are
+    // still in the pool. Said once, plainly, rather than pretended away.
+    blindFrom: blocks.findIndex((b) => b.blind),
+    // Persistent, unlike `recounted` above, which is only the transition: the player needs to see
+    // "these counts are at 95, the game is still running 90" for as long as it is true.
+    thresholdDrift: bag.loaded && bag.threshold !== null && threshold !== bag.threshold ? bag.threshold : null,
+  };
+}
+
+// ───────────────────── rendering: the grid ─────────────────────
+function levelClass(level) { return level === 'glow' ? 'lv3' : level === 'mark' ? 'lv2' : 'lv1'; }
+
+function renderGrid() {
+  const host = $('grid');
+  if (!bag.loaded) {
+    host.innerHTML = '<p class="empty" style="grid-column:1/-1;max-width:60ch">'
+      + 'No bag snapshot yet. ValeLoot writes <b style="font-family:var(--mono);font-style:normal">valeloot-bag.txt</b> '
+      + 'once you log in and open your bag — scroll it, or switch tabs, and every item it draws is added. '
+      + 'Until then this page can check your rules but cannot show you what they will do.</p>';
+    return;
+  }
+  if (!bag.items.length) {
+    host.innerHTML = '<p class="empty" style="grid-column:1/-1">The snapshot is empty — open your bag in game, then press re-read.</p>';
+    return;
+  }
+  let html = '';
+  for (const item of bag.items) {
+    const mark = plan ? plan.marks.get(item.uid) : null;
+    // A pinned item is LIT — glow, #facc15, tagged PINNED — because that is what AlwaysShow draws
+    // in game. Treating only rule matches as lit left the loudest cell in the bag looking claimed
+    // by nothing, which is the exact opposite of what the player asked for.
+    const lit = mark && (mark.kind === 'lit' || mark.kind === 'pinned');
+    const cls = ['cell'];
+    if (lit) { cls.push('lit', levelClass(mark.level)); } else { cls.push('dim'); }
+    if (item.uid === selectedUid) cls.push('sel');
+    const color = lit ? mark.color : '#000000';
+    // `by` is the block index that claimed it — including a Hide, whose claim is invisible in the bag
+    // and therefore the one most worth being able to point at.
+    const by = mark && mark.by !== undefined ? ' data-by="' + mark.by + '"' : '';
+    html += '<div class="' + cls.join(' ') + '" style="--c:' + esc(color) + '" data-uid="' + esc(item.uid || '') + '"' + by
+      + ' tabindex="0" role="button" aria-label="' + esc(item.name) + '">'
+      + '<span class="tint"></span><span class="ring"></span>'
+      + (lit && mark.label ? '<span class="tag">' + esc(mark.label) + '</span>' : '')
+      + (item.favorite ? '<span class="fav" title="favourited in game"></span>' : '')
+      + '<span class="ty">' + esc(item.slotType || '\u00b7') + '</span>'
+      + '<span class="nm">' + esc(item.name) + '</span>'
+      + (item.refine || item.topRolls
+        ? '<span class="foot">' + (item.refine ? '<span class="rf">+' + item.refine + '</span>' : '')
+          + (item.topRolls ? '<span class="tp">\u2605' + item.topRolls + '</span>' : '') + '</span>'
+        : '')
+      + '</div>';
+  }
+  host.innerHTML = html;
+}
+
+function renderTally() {
+  if (!plan) { $('tally').innerHTML = ''; return; }
+  if (!bag.loaded) {
+    $('tally').innerHTML = '<span>no snapshot — counts unavailable</span>';
+    return;
+  }
+  $('tally').innerHTML = '<span class="lit"><b>' + plan.lit + '</b> highlighted</span>'
+    + '<span><b>' + plan.silenced + '</b> silenced</span>'
+    + '<span><b>' + plan.untouched + '</b> claimed by nothing</span>'
+    // "Seen this session" is this page's summary of the bag's coverage; served, the mod states its own
+    // and that is the authoritative one, so it becomes what the count explains itself with.
+    + '<span' + (served.coverage ? ' title="' + esc(served.coverage) + '"' : '')
+      + '><s>of</s> ' + plan.total + ' seen this session</span>'
+    + (plan.thresholdDrift !== null
+      ? '<span style="color:var(--warn)">top rolls recounted at ' + plan.threshold
+        + '% \u2014 the game is still running ' + plan.thresholdDrift + '%</span>'
+      : '');
+}
+
+// ───────────────────── rendering: the cascade ─────────────────────
+function statLine(item) {
+  return item.lines.map((l) => {
+    const roll = l.rollPct === null ? '' : (l.rollPct > 100 ? '<u>' + l.rollPct + '%</u>' : l.rollPct + '%');
+    const printed = l.printed === null ? '<s>?</s>' : '+' + l.printed;
+    return esc(l.stat) + ' ' + printed + (roll ? ' ' + roll : '');
+  }).join('  ');
+}
+
+function condCrumbs(block) {
+  const skip = ['color', 'colour', 'highlight', 'sound', 'tag', 'flash'];
+  const parts = block.body.filter((l) => !skip.includes(l.key)).map((l) => l.text.replace(/\s+/g, ' '));
+  if (!parts.length) return '<em>no conditions — this claims everything below it</em>';
+  return parts.map((p) => esc(p)).join('<span> · </span>');
+}
+
+function ruleRow(block, index) {
+  const color = blockColor(block);
+  const level = blockLevel(block);
+  const hide = block.kind === 'hide';
+  const open = openRule === index;
+  const share = plan.total ? Math.round((block.count / plan.total) * 100) : 0;
+
+  let count;
+  if (block.errors.length) count = '<span class="rcount zero">rejected</span>';
+  else if (block.blind) count = '<span class="rcount na" title="' + esc(block.blind) + '">— no data</span>';
+  else if (!bag.loaded) count = '<span class="rcount na">—</span>';
+  else if (block.count === 0) count = '<span class="rcount zero">0</span>';
+  else count = '<span class="rcount' + (share >= 35 ? ' big' : '') + '">' + block.count + '</span>';
+
+  let html = '<div class="rule' + (open ? ' open' : '') + (hide ? ' hide' : '')
+    + (block.errors.length ? ' broken' : '') + '" data-r="' + index + '" draggable="true"'
+    + ' style="--c:' + esc(color) + '" tabindex="0">';
+  html += '<button class="rhead" data-open="' + index + '">'
+    + '<span class="ord" data-grip="' + index + '" title="drag to reorder — first match wins">' + (index + 1) + '</span>'
+    + '<span class="swatch ' + (hide ? '' : levelClass(level)) + '"></span>'
+    + '<span class="rname">' + esc(block.name) + '</span>'
+    + (hide ? '<span class="rverb">HIDE</span>' : '')
+    + count + '</button>';
+  html += '<div class="share"><i style="width:' + (block.errors.length ? 0 : share) + '%"></i></div>';
+
+  if (!open) return html + '</div>';
+
+  html += '<div class="rbody">';
+  html += '<div class="crumbs" data-jump="' + index + '" title="click to edit the conditions in the text">'
+    + condCrumbs(block) + '</div>';
+
+  // Warnings first: a rule that is not doing what it looks like it is doing is the headline.
+  if (block.errors.length) {
+    html += '<div class="warn dead"><b>ValeLoot throws this whole block away.</b> A half-understood block '
+      + 'matches more than it was told to, so nothing here runs.'
+      + block.errors.map((e) => '<div style="margin-top:5px"><b>line ' + e.line + '</b> · ' + esc(e.message)
+        + ' <button class="btn tiny" data-line="' + (e.line - 1) + '">show me</button></div>').join('')
+      + '</div>';
+  } else if (block.blind) {
+    html += '<div class="warn">This rule asks about <b>' + esc(block.blind) + '</b>. It will work in game — '
+      + 'the preview simply cannot show you which items it takes, so it is left out of the counts above and below '
+      + 'rather than shown as zero.</div>';
+  } else if (bag.loaded && block.count === 0 && block.alone > 0) {
+    html += '<div class="warn"><b>Claims nothing, because rules above it already took all ' + block.alone
+      + '.</b> Move it up and it gets first refusal.'
+      + '<button class="btn tiny" data-up="' + index + '">move up</button></div>';
+  } else if (bag.loaded && block.count === 0) {
+    html += '<div class="warn dead"><b>Matches nothing in your bag.</b> Check the stat name, the item name, '
+      + 'or the threshold.</div>';
+  } else if (bag.loaded && share >= 50) {
+    html += '<div class="warn">This one rule takes <b>' + share + '% of the bag</b> — every rule below it only '
+      + 'sees what is left.</div>';
+  }
+
+  if (hide) {
+    html += '<div class="warn" style="border-left-color:var(--line2)">A <b>Hide</b> block claims these items and '
+      + 'then draws nothing and plays nothing. That is its whole job — there is no colour to pick.</div>';
+  } else {
+    // Collapsed pickers. A control that is always open is a control that is always shouting.
+    html += '<div class="fieldrow"><span class="lbl">colour</span>'
+      + '<button class="chip" data-pick="color" style="--c:' + esc(color) + '"><span class="dot"></span>'
+      + '<span class="hex">' + esc(color) + '</span></button></div>';
+    if (openPicker === 'color') {
+      html += '<div class="popout"><div class="pal">'
+        + PALETTE.map((c) => '<button style="background:' + c + '" class="' + (c === color ? 'on' : '') + '"'
+          + ' data-color="' + c + '" title="' + c + '" aria-label="colour ' + c + '"></button>').join('')
+        + '<span class="any" style="width:22px;height:22px;border-radius:3px;display:inline-block;position:relative">'
+        + '<input type="color" value="' + esc(color) + '" id="anycolor" aria-label="any colour"></span>'
+        + '<span class="hint">these ten stay apart on a dark cell</span></div></div>';
+    }
+
+    html += '<div class="fieldrow"><span class="lbl">how loud</span>'
+      + '<button class="chip" data-pick="level" style="--c:' + esc(color) + '">' + level + '</button></div>';
+    if (openPicker === 'level') {
+      html += '<div class="popout"><div class="lvls" style="--c:' + esc(color) + '">'
+        + LEVELS.map(([name, help]) => '<button class="lvl ' + (name === level ? 'on' : '') + '" data-l="'
+          + name + '" data-level="' + name + '" title="' + esc(help) + '"><span class="demo"></span>' + name
+          + '</button>').join('')
+        + '</div></div>';
+    }
+
+    const sound = block.deco.sound ? block.deco.sound.rest : '';
+    html += '<div class="fieldrow"><span class="lbl">sound</span>'
+      + '<button class="chip" data-pick="sound">' + (sound ? esc(sound) : 'silent') + '</button>'
+      + (sound ? '<button class="btn tiny" data-audition="' + esc(sound) + '" title="hear it">\u25b6</button>' : '')
+      + '</div>';
+    if (openPicker === 'sound') {
+      html += '<div class="popout"><div class="snds">'
+        + '<button class="' + (sound ? '' : 'on') + '" data-sound="">silent</button>'
+        + VL.BUILTIN_LOOT_SOUNDS.map((name) => '<button class="' + (name === sound ? 'on' : '') + '"'
+          + ' data-sound="' + name + '">' + name + '</button>').join('')
+        + '<label class="own">or a .wav of your own in BepInEx/config/valeloot-sounds/'
+        + '<input id="ownsound" placeholder="my-sound.wav" value="'
+        + (sound && !VL.BUILTIN_LOOT_SOUNDS.includes(sound) ? esc(sound) : '') + '"></label>'
+        + '</div></div>';
+    }
+  }
+
+  // What it catches, with the real items — no separate view, and never a bare number.
+  if (bag.loaded && !block.errors.length && !block.blind) {
+    html += '<div class="catches">';
+    if (block.caught.length) {
+      html += block.caught.slice(0, 14).map((item) => '<div class="crow" data-show="' + esc(item.uid || '') + '">'
+        + '<span class="n">' + esc(item.name) + '</span>'
+        + '<span class="r">' + (item.refine ? '<span>+' + item.refine + '</span>' : '')
+        + (item.topRolls ? '<u>\u2605' + item.topRolls + '</u>' : '')
+        + '<span>' + (item.avgRoll === null ? '\u2014' : Math.round(item.avgRoll) + '%') + '</span></span>'
+        + '<span class="st">' + statLine(item) + '</span></div>').join('');
+      if (block.caught.length > 14) html += '<p class="empty">+ ' + (block.caught.length - 14) + ' more</p>';
+    } else {
+      html += '<p class="empty">nothing in the snapshot</p>';
+    }
+    html += '</div>';
+  }
+
+  html += '<div class="fieldrow"><span class="lbl"></span>'
+    + '<button class="btn tiny" data-verb="' + index + '">turn into ' + (hide ? 'Show' : 'Hide') + '</button>'
+    + '<button class="btn tiny" data-jump="' + index + '">edit as text</button>'
+    + '<button class="btn tiny" data-del="' + index + '">delete</button></div>';
+  html += '</div></div>';
+  return html;
+}
+
+const TEMPLATES = {
+  top: 'Show "Top rolls"\n    TopRolls  >= 2\n    Highlight mark',
+  stat: 'Show "A stat I want"\n    Stat      Agi >= 90%\n    Highlight mark',
+  shout: 'Show "Shout about these"\n    TopRolls  >= 3\n    Highlight glow\n    Sound     chime',
+  quiet: 'Hide "vendor trash"\n    AvgRoll   < 35\n    TopRolls  < 1',
+};
+
+function renderCascade() {
+  if (!plan) return;
+  const host = $('cascade');
+  let html = '';
+  html += '<p class="casnote">First match wins. An item takes the colour of the <b>topmost</b> rule that '
+    + 'claims it, so order is the filter.</p>';
+
+  if (plan.blindFrom >= 0) {
+    html += '<div class="warn" style="margin:0 0 8px">Rule ' + (plan.blindFrom + 1) + ' asks about the chaos slot, '
+      + 'which the bag snapshot does not record. It is skipped in this preview, so the counts on the rules '
+      + '<b>below</b> it are a lower bound rather than an answer.</div>';
+  }
+
+  html += plan.blocks.map((block, index) => ruleRow(block, index)).join('')
+    || '<p class="empty">No rules yet. Start with one of these, or click an item in your bag.</p>';
+
+  const loose = plan.errors.filter((e) =>
+    !plan.blocks.some((b) => e.line - 1 >= b.start && e.line - 1 <= b.end));
+  if (loose.length) {
+    html += '<h3 class="sec">outside every rule</h3>'
+      + loose.map((e) => '<div class="warn dead" style="margin-top:4px"><b>line ' + e.line + '</b> · '
+        + esc(e.message) + ' <button class="btn tiny" data-line="' + (e.line - 1) + '">show me</button></div>').join('');
+  }
+
+  html += '<div class="addrow"><span class="lbl">add</span>'
+    + '<button data-t="top">top rolls</button><button data-t="stat">a stat</button>'
+    + '<button data-t="shout">shout + sound</button><button data-t="quiet">quiet trash</button></div>';
+
+  const pins = plan.parsed.overrides.pin;
+  const mutes = plan.parsed.overrides.mute;
+  if (pins.length || mutes.length) {
+    html += '<h3 class="sec">per item, whatever the rules say</h3>'
+      + pins.map((id) => '<div class="ovr"><span class="v">PINNED</span><span>' + esc(id) + '</span>'
+        + '<button class="btn tiny" data-unpin="' + esc(id) + '">remove</button></div>').join('')
+      + mutes.map((id) => '<div class="ovr"><span class="v q">SILENT</span><span>' + esc(id) + '</span>'
+        + '<button class="btn tiny" data-unmute="' + esc(id) + '">remove</button></div>').join('');
+  }
+
+  host.innerHTML = html;
+  if (focusRule !== null) {
+    const el = host.querySelector('.rule[data-r="' + focusRule + '"]');
+    if (el) el.focus();
+    focusRule = null;
+  }
+}
+
+// ───────────────────── editing the text, by line ─────────────────────
+function setText(text, refocus) {
+  src.value = text;
+  refresh();
+  if (refocus) src.focus();
+}
+
+function apply(lines) { setText(lines.join('\n')); }
+
+function setDeco(index, keyword, value) {
+  const lines = src.value.split('\n');
+  const block = parseBlocks(src.value)[index];
+  if (!block) return;
+  const existing = block.deco[keyword.toLowerCase()];
+  if (value === null) {
+    if (existing) lines.splice(existing.line, 1);
+  } else {
+    const text = '    ' + keyword.padEnd(9) + ' ' + value;
+    if (existing) lines[existing.line] = text;
+    else lines.splice(block.end + 1, 0, text);
+  }
+  apply(lines);
+}
+
+function setHead(index, kind, name) {
+  const lines = src.value.split('\n');
+  const block = parseBlocks(src.value)[index];
+  if (!block) return;
+  lines[block.head] = (kind === 'hide' ? 'Hide' : 'Show') + ' "' + String(name).replace(/"/g, "'") + '"';
+  // The parser REFUSES a Hide block carrying Highlight or Sound rather than swallowing the request,
+  // so dropping those as the verb flips is the only way the flip is not instantly an error the
+  // author never typed.
+  if (kind === 'hide') {
+    for (const line of [...block.body].reverse()) {
+      if (line.key === 'highlight' || line.key === 'sound' || line.key === 'flash') lines.splice(line.line, 1);
+    }
+  }
+  apply(lines);
+}
+
+function removeBlock(index) {
+  const lines = src.value.split('\n');
+  const block = parseBlocks(src.value)[index];
+  if (!block) return;
+  let end = block.end;
+  while (end + 1 < lines.length && lines[end + 1].trim() === '') end++;
+  lines.splice(block.start, end - block.start + 1);
+  if (openRule === index) openRule = null;
+  apply(lines);
+}
+
+function swapBlocks(a, b) {
+  const lines = src.value.split('\n');
+  const blocks = parseBlocks(src.value);
+  const first = blocks[Math.min(a, b)];
+  const second = blocks[Math.max(a, b)];
+  if (!first || !second) return null;
+  return [
+    ...lines.slice(0, first.start),
+    ...lines.slice(second.start, second.end + 1),
+    ...lines.slice(first.end + 1, second.start),
+    ...lines.slice(first.start, first.end + 1),
+    ...lines.slice(second.end + 1),
+  ];
+}
+
+function moveRule(from, to) {
+  const total = parseBlocks(src.value).length;
+  if (to < 0 || to >= total || from === to) return;
+  let at = from;
+  while (at !== to) {
+    const step = at < to ? at + 1 : at - 1;
+    const lines = swapBlocks(at, step);
+    if (!lines) break;
+    src.value = lines.join('\n');
+    at = step;
+  }
+  if (openRule === from) openRule = at;
+  focusRule = at;
+  refresh();
+}
+
+function appendText(text) {
+  src.value = src.value.replace(/\s*$/, '') + '\n\n' + text + '\n';
+  openRule = parseBlocks(src.value).length - 1;
+  refresh();
+}
+
+function jumpToLine(index) {
+  showTab('text');
+  const lines = src.value.split('\n');
+  if (index < 0 || index >= lines.length) return;
+  const start = lines.slice(0, index).join('\n').length + (index ? 1 : 0);
+  src.focus();
+  src.setSelectionRange(start, start + lines[index].length);
+  const row = $('hl').children[index];
+  if (row) src.scrollTop = Math.max(0, row.offsetTop - 60);
+  syncScroll();
+}
+
+// ───────────────────── the text pane ─────────────────────
+function highlightLine(line) {
+  const comment = line.search(/(^|\s)#(?![0-9a-fA-F]{6}\b)/);
+  const code = comment >= 0 ? line.slice(0, comment) : line;
+  const tail = comment >= 0 ? '<span class="k-com">' + esc(line.slice(comment)) + '</span>' : '';
+  const head = /^(\s*)(\S+)([\s\S]*)$/.exec(code);
+  if (!head) return esc(code) + tail;
+  const indent = head[1];
+  const word = head[2];
+  const rest = head[3];
+  const lower = word.toLowerCase();
+  let cls = '';
+  if (!indent) {
+    if (lower === 'hide' || lower === 'alwayshide' || lower === 'mute') cls = 'k-hide';
+    else if (BLOCK_WORDS[lower] || OVERRIDE_WORDS[lower] || lower === 'threshold') cls = 'k-show';
+  } else {
+    const deco = ['highlight', 'sound', 'tag', 'color', 'colour', 'flash'].includes(lower);
+    cls = deco ? 'k-deco' : 'k-cond';
+  }
+  const painted = (rest || '')
+    .replace(/"[^"]*"/g, (m) => '\u0001' + m + '\u0002')
+    .replace(/-?\d+(\.\d+)?%?/g, (m) => '\u0003' + m + '\u0004');
+  const body = esc(painted)
+    .replace(/\u0001([^\u0002]*)\u0002/g, '<span class="k-str">$1</span>')
+    .replace(/\u0003([^\u0004]*)\u0004/g, '<span class="k-num">$1</span>');
+  return esc(indent) + (cls ? '<span class="' + cls + '">' + esc(word) + '</span>' : esc(word)) + body + tail;
+}
+
+/**
+ * Repaint the highlight layer, the gutter and the inline error notes.
+ *
+ * Every line is its own block element so its top can be MEASURED. Multiplying the line number by the
+ * line height is right until a line wraps — and the long `Type` and `AlwaysShow` lines, the ones you
+ * most want a marker against, are exactly the ones that wrap.
+ */
+function paint() {
+  const lines = src.value.split('\n');
+  $('hl').innerHTML = lines.map((line) => '<div class="ln">' + highlightLine(line) + '</div>').join('');
+  const rows = $('hl').children;
+  const byLine = new Map();
+  for (const error of (plan ? plan.errors : [])) if (!byLine.has(error.line)) byLine.set(error.line, error);
+  const heads = new Set((plan ? plan.blocks : []).map((b) => b.head));
+  let gut = '';
+  let marks = '';
+  for (let i = 0; i < lines.length; i++) {
+    const top = rows[i] ? rows[i].offsetTop : 0;
+    const error = byLine.get(i + 1);
+    gut += '<i class="' + (error ? 'bad' : (heads.has(i) ? 'head' : '')) + '" style="top:' + top + 'px">' + (i + 1) + '</i>';
+    if (error) {
+      marks += '<div class="emark' + (error.mod ? ' mod' : '') + '" style="top:' + top + 'px">'
+        + esc(error.message) + '</div>';
+    }
+  }
+  $('gutin').innerHTML = gut;
+  $('markin').innerHTML = marks;
+  syncScroll();
+}
+function syncScroll() {
+  const offset = 'translateY(' + (-src.scrollTop) + 'px)';
+  $('gutin').style.transform = offset;
+  $('markin').style.transform = offset;
+  $('hl').scrollTop = src.scrollTop;
+  $('hl').scrollLeft = src.scrollLeft;
+}
+
+/**
+ * The two `Stat` forms, taught where they are typed.
+ *
+ * `Stat Agi >= 3` is the printed value; `Stat Agi >= 90%` is roll quality. They look like the same
+ * question and are not: a 0% roll already prints most of the maximum, so `>= 3` passes almost
+ * everything while `>= 90%` passes almost nothing. Documenting that in a help panel has never
+ * worked. So when the caret is on a Stat line, both readings are counted against the real bag and
+ * shown side by side — the difference stops being a sentence and becomes two numbers.
+ */
+function coach() {
+  const box = $('coach');
+  const upto = src.value.slice(0, src.selectionStart);
+  const line = upto.slice(upto.lastIndexOf('\n') + 1) + src.value.slice(src.selectionStart).split('\n')[0];
+  const match = /^\s*stat\s+(\S+)\s*(?:[<>]=?|=)?\s*(-?\d+(?:\.\d+)?)?\s*(%?)\s*$/i.exec(line);
+  if (!match) { box.className = ''; return; }
+  const stat = match[1];
+  const value = match[2] === undefined ? null : Number(match[2]);
+  const isPct = match[3] === '%';
+  let html = '<b>' + esc(stat) + '</b> — two different questions, and the <span class="q">%</span> is the whole difference.';
+  if (bag.loaded && value !== null) {
+    const wanted = stat.toLowerCase();
+    let byValue = 0;
+    let byRoll = 0;
+    let has = 0;
+    for (const item of bag.items) {
+      const hit = item.lines.find((l) => l.stat.toLowerCase() === wanted);
+      if (!hit) continue;
+      has++;
+      if (hit.printed !== null && hit.printed >= value) byValue++;
+      if (hit.rollPct !== null && hit.rollPct >= value) byRoll++;
+    }
+    html += '<div class="two">'
+      + '<div><span class="v">Stat ' + esc(stat) + ' &gt;= ' + value + '</span> the printed value · '
+      + '<span class="n">' + byValue + '</span> of ' + has + ' pass</div>'
+      + '<div><span class="q">Stat ' + esc(stat) + ' &gt;= ' + value + '%</span> how well it rolled · '
+      + '<span class="n">' + byRoll + '</span> of ' + has + ' pass</div></div>';
+    html += '<div style="margin-top:4px;color:var(--faint)">'
+      + (isPct ? 'You are asking for roll quality.' : 'You are asking for the printed value.')
+      + ' A 0% roll already prints most of the maximum, so a bare number passes almost everything.</div>';
+  } else {
+    html += '<div class="two"><div><span class="v">Stat ' + esc(stat) + ' &gt;= 3</span> the printed "+3"</div>'
+      + '<div><span class="q">Stat ' + esc(stat) + ' &gt;= 90%</span> the top 10% of its range</div></div>';
+  }
+  box.innerHTML = html;
+  box.className = 'on';
+}
+
+// ───────────────────── autocomplete ─────────────────────
+let acItems = [];
+let acIndex = 0;
+let acRange = null;
+
+function contextAt() {
+  const upto = src.value.slice(0, src.selectionStart);
+  const lineStart = upto.lastIndexOf('\n') + 1;
+  const line = upto.slice(lineStart);
+  if (line.trimStart().startsWith('#')) return null;
+  const indented = /^\s/.test(line);
+  const words = line.trimStart().split(/\s+/);
+  const first = (words[0] || '').toLowerCase();
+  const tail = (token) => ({ token: token || '', from: lineStart + line.length - (token || '').length });
+
+  if (!indented && words.length <= 1) return Object.assign({ kind: 'keyword' }, tail(words[0]));
+  if (!indented && (first === 'alwaysshow' || first === 'alwayshide')) return itemContext(line, lineStart);
+  if (!indented) return null;
+  if (words.length <= 1) return Object.assign({ kind: 'cond' }, tail(words[0]));
+  if (first === 'name') return itemContext(line, lineStart);
+  if (first === 'stat' && words.length === 2) return Object.assign({ kind: 'stat' }, tail(words[1]));
+  if (first === 'type') return Object.assign({ kind: 'type' }, tail(words[words.length - 1]));
+  if (first === 'highlight' && words.length === 2) return Object.assign({ kind: 'level' }, tail(words[1]));
+  if (first === 'sound' && words.length === 2) return Object.assign({ kind: 'sound' }, tail(words[1]));
+  return null;
+}
+function itemContext(line, lineStart) {
+  const after = line.replace(/^\s*\S+\s*/, '');
+  return { kind: 'item', token: after.replace(/^"/, ''), from: lineStart + line.length - after.length };
+}
+
+function candidates(context) {
+  const q = context.token.toLowerCase();
+  const hit = (s) => s.toLowerCase().startsWith(q) || (q.length > 1 && s.toLowerCase().includes(q));
+  if (context.kind === 'keyword') return KEYWORDS.filter(([w]) => hit(w)).map(([w, h]) => ({ text: w, help: h }));
+  if (context.kind === 'cond') return CONDITIONS.filter(([w]) => hit(w)).map(([w, h]) => ({ text: w, help: h }));
+  if (context.kind === 'level') return LEVELS.filter(([w]) => hit(w)).map(([w, h]) => ({ text: w, help: h }));
+  if (context.kind === 'sound') {
+    return VL.BUILTIN_LOOT_SOUNDS.filter(hit).map((n) => ({ text: n, help: 'built in — click \u25b6 to hear it' }));
+  }
+  if (context.kind === 'stat') return vocab.stats.filter(hit).slice(0, 60).map((s) => ({ text: s }));
+  if (context.kind === 'type') return vocab.types.filter(hit).slice(0, 60).map((t) => ({ text: t }));
+  if (context.kind === 'item') {
+    // The type travels with the name: two items called "… Fang Clip" are only distinguishable by it.
+    return vocab.items.filter((i) => hit(i.name)).slice(0, 80)
+      .map((i) => ({ text: i.name, meta: i.type + (i.level ? ' · lv' + i.level : '') }));
+  }
+  return [];
+}
+
+function showAC(force) {
+  const context = contextAt();
+  if (!context || (!force && !context.token)) return hideAC();
+  const list = candidates(context);
+  if (!list.length) return hideAC();
+  acItems = list; acIndex = 0; acRange = context;
+  hideAC();
+  const box = document.createElement('div');
+  box.className = 'ac';
+  box.id = 'ac';
+  box.innerHTML = list.map((item, i) => '<div class="' + (i === 0 ? 'on' : '') + '" data-i="' + i + '">'
+    + '<b>' + esc(item.text) + '</b>'
+    + (item.help ? '<span class="help">' + esc(item.help) + '</span>' : '')
+    + (item.meta ? '<span class="meta">' + esc(item.meta) + '</span>' : '') + '</div>').join('');
+  document.querySelector('.edit').appendChild(box);
+  const upto = src.value.slice(0, src.selectionStart).split('\n');
+  const row = $('hl').children[upto.length - 1];
+  box.style.left = Math.min(42 + upto[upto.length - 1].length * 7, 150) + 'px';
+  box.style.top = ((row ? row.offsetTop : 10) - src.scrollTop + 22) + 'px';
+  box.addEventListener('mousedown', (event) => {
+    event.preventDefault();
+    const hit = event.target.closest('[data-i]');
+    if (hit) accept(Number(hit.dataset.i));
+  });
+}
+function hideAC() { const el = $('ac'); if (el) el.remove(); acItems = []; }
+function accept(index) {
+  const item = acItems[index];
+  if (!item || !acRange) return;
+  const before = src.value.slice(0, acRange.from);
+  const after = src.value.slice(src.selectionStart);
+  const quoted = acRange.kind === 'item' && /\s/.test(item.text) ? '"' + item.text + '"' : item.text;
+  const insert = quoted + (acRange.kind === 'cond' || acRange.kind === 'keyword' ? ' ' : '');
+  src.value = before + insert + after;
+  const caret = before.length + insert.length;
+  src.setSelectionRange(caret, caret);
+  hideAC();
+  refresh();
+  src.focus();
+  src.setSelectionRange(caret, caret);
+}
+
+// ───────────────────── sounds ─────────────────────
+/** The same five the mod synthesises, note for note — the five differ in SHAPE, not in pitch. */
+function tone(ctx, out, at, type, from, to, dur, peak) {
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(from, at);
+  if (to !== from) osc.frequency.exponentialRampToValueAtTime(to, at + dur);
+  // Never ramp a gain to a true zero: an exponential ramp to 0 is undefined and silences the note.
+  amp.gain.setValueAtTime(0.0001, at);
+  amp.gain.exponentialRampToValueAtTime(peak, at + 0.012);
+  amp.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  osc.connect(amp); amp.connect(out);
+  osc.start(at);
+  osc.stop(at + dur + 0.03);
+}
+const SYNTH = {
+  blip: (c, o, t) => { tone(c, o, t, 'square', 880, 880, 0.07, 0.30); },
+  chime: (c, o, t) => { tone(c, o, t, 'triangle', 1318.5, 1318.5, 0.30, 0.28); tone(c, o, t + 0.06, 'triangle', 1975.5, 1975.5, 0.34, 0.22); },
+  ding: (c, o, t) => { tone(c, o, t, 'sine', 1046.5, 1046.5, 0.10, 0.30); tone(c, o, t + 0.08, 'sine', 1568, 1568, 0.32, 0.32); },
+  alert: (c, o, t) => { tone(c, o, t, 'square', 740, 740, 0.09, 0.26); tone(c, o, t + 0.14, 'square', 740, 740, 0.09, 0.26); },
+  thud: (c, o, t) => { tone(c, o, t, 'sine', 160, 48, 0.22, 0.45); },
+};
+let audioCtx;
+function audition(name) {
+  const synth = SYNTH[name];
+  if (!synth) {
+    say('"' + name + '" is one of your own files — ValeLoot plays it from BepInEx/config/valeloot-sounds/, '
+      + 'and this page cannot reach in there to audition it.');
+    return;
+  }
+  if (audioCtx === undefined) {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    audioCtx = Ctor ? new Ctor() : null;
+  }
+  if (!audioCtx) { say('this browser has no WebAudio, so the builtins cannot be auditioned', true); return; }
+  // A context built before a gesture starts SUSPENDED, and a suspended context schedules every note
+  // perfectly and plays none of them — the classic "the audition button does nothing".
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  const out = audioCtx.createGain();
+  out.gain.value = 0.6;
+  out.connect(audioCtx.destination);
+  synth(audioCtx, out, audioCtx.currentTime + 0.02);
+}
+
+// ───────────────────── where the three things come from ─────────────────────
+const hasFS = typeof window.showDirectoryPicker === 'function';
+
+function fileLabel(state, name, detail, missing) {
+  return '<span class="' + (state ? 'ok' : 'no') + '"><i>' + (state ? '\u25cf' : '\u25cb') + '</i>'
+    + '<b>' + name + '</b> ' + esc(state ? detail : missing) + '</span>';
+}
+function renderFileState() {
+  // Served, there are no three files to be missing — the same three things arrive in one payload, so
+  // the absent-state wording has to name what is actually absent.
+  const serving = mode === 'served';
+  $('filestate').innerHTML = ''
+    + fileLabel(fileState.filter !== null, 'rules', fileState.filter || '', 'not loaded')
+    + fileLabel(fileState.items !== null, 'names', fileState.items || '',
+      serving ? 'the game\u2019s catalog is not ready' : 'no valeloot-items.txt')
+    + fileLabel(fileState.bag !== null, 'bag', fileState.bag || '',
+      serving ? 'nothing seen yet' : 'no valeloot-bag.txt');
+}
+
+function say(message, bad, good) {
+  $('foot').className = bad ? 'bad' : (good ? 'good' : '');
+  $('footmsg').textContent = message;
+}
+
+async function readEntry(dir, name) {
+  try {
+    const handle = await dir.getFileHandle(name);
+    const file = await handle.getFile();
+    return { text: await file.text(), at: file.lastModified };
+  } catch (error) { return null; }
+}
+
+/** Ask again rather than throw: a handle survives a reload of the page but not always its permission. */
+async function ensurePermission(handle, write) {
+  const options = { mode: write ? 'readwrite' : 'read' };
+  if (!handle.queryPermission) return true;
+  if ((await handle.queryPermission(options)) === 'granted') return true;
+  return (await handle.requestPermission(options)) === 'granted';
+}
+
+/**
+ * The three things this page needs, set from whichever source supplied them.
+ *
+ * `load*Text` is the file path; `setVocab`/`setBag` are what the served path calls with an already
+ * converted payload. Both end in the same place, so nothing downstream knows which happened.
+ */
+function loadFilterText(text) {
+  setText(text);
+  fileState.filter = (text.split('\n').length) + ' lines';
+  renderFileState();
+}
+function setVocab(next) {
+  vocab = next;
+  // An empty vocabulary is a MISSING one, not a loaded one containing nothing: the mod sends an empty
+  // item list while the game's catalog is still building, and "0 items" beside a lit dot reads as
+  // "there are no items in this game" rather than "ask again in a moment".
+  fileState.items = vocab.items.length ? vocab.items.length + ' items · ' + vocab.stats.length + ' stats' : null;
+  renderFileState();
+  refresh();
+}
+function loadItemsText(text) { setVocab(parseItems(text)); }
+function setBag(next) {
+  bag = next;
+  const when = bag.stamp ? ' · ' + bag.stamp : '';
+  fileState.bag = bag.items.length + ' items' + when;
+  if (bag.malformed) fileState.bag += ' · ' + bag.malformed + ' unreadable lines';
+  renderFileState();
+  refresh();
+}
+function loadBagText(text) { setBag(parseBag(text)); }
+
+async function loadFromDir() {
+  const filter = await readEntry(dirHandle, filterName);
+  const items = await readEntry(dirHandle, ITEMS_FILE);
+  const snapshot = await readEntry(dirHandle, BAG_FILE);
+  if (filter) loadFilterText(filter.text);
+  else { setText(STARTER); fileState.filter = null; renderFileState(); }
+  if (items) loadItemsText(items.text);
+  if (snapshot) loadBagText(snapshot.text);
+
+  const missing = [];
+  if (!items) missing.push(ITEMS_FILE);
+  if (!snapshot) missing.push(BAG_FILE);
+  $('footpath').textContent = dirHandle.name + '/' + filterName;
+  if (missing.length) {
+    say((filter ? 'Rules loaded. ' : 'No rules file yet — starting you off with a few. ')
+      + missing.join(' and ') + ' ' + (missing.length > 1 ? 'are' : 'is') + ' not there yet: '
+      + 'ValeLoot writes ' + (missing.length > 1 ? 'them' : 'it') + ' once you log in and open your bag.');
+  } else {
+    say('Read all three files from ' + dirHandle.name + '.', false, true);
+  }
+}
+
+async function pickDirectory() {
+  try {
+    dirHandle = await window.showDirectoryPicker({ id: 'valeloot-config', mode: 'readwrite' });
+  } catch (error) {
+    if (error && error.name === 'AbortError') return;
+    say('could not open that folder: ' + (error && error.message ? error.message : error), true);
+    return;
+  }
+  $('gate').style.display = 'none';
+  // A folder was just granted, so what Save can do has changed — the label is derived, never assumed.
+  applyModeChrome();
+  await loadFromDir();
+}
+
+async function saveToFolder() {
+  const problems = plan ? plan.errors.length : 0;
+  if (problems) { say(problems + ' problem(s) to fix first — each is marked on its line in the Text tab.', true); return; }
+  if (!dirHandle) {
+    // Two different reasons to land here, and the message has to name the right one: a browser that
+    // cannot write at all, or a session — including one whose mod just exited — with no folder yet.
+    downloadText();
+    say(hasFS
+      ? 'No folder is granted, so the file was downloaded instead. Move it into BepInEx/config/ '
+        + 'yourself, or grant the folder with re-read and save again.'
+      : 'This browser cannot write into your game folder, so the file was downloaded instead — move it '
+        + 'into BepInEx/config/ yourself. Chrome or Edge can do it in one click.');
+    return;
+  }
+  try {
+    if (!(await ensurePermission(dirHandle, true))) {
+      say('Writing needs permission for that folder. Choose it again to grant it.', true);
+      $('gate').style.display = 'flex';
+      return;
+    }
+    const handle = await dirHandle.getFileHandle(filterName, { create: true });
+    const stream = await handle.createWritable();
+    await stream.write(new Blob([src.value], { type: 'text/plain' }));
+    await stream.close();
+    const rules = plan ? plan.parsed.rules.length : 0;
+    say('Saved ' + rules + ' rule(s) to ' + filterName + '. ValeLoot picks it up the next time your inventory '
+      + 'redraws — open your bag, or scroll it, and the colours change. No restart.', false, true);
+  } catch (error) {
+    if (error && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
+      say('That folder\u2019s permission expired. Choose it again and the save will go through.', true);
+      $('gate').style.display = 'flex';
+      return;
+    }
+    say('could not write ' + filterName + ': ' + (error && error.message ? error.message : error), true);
+  }
+}
+
+function downloadText() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([src.value], { type: 'text/plain' }));
+  a.download = FILTER_FILE;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+// ───────────────────── served by the mod, over loopback ─────────────────────
+/**
+ * The other way this page runs: the mod handed it to the browser itself.
+ *
+ * Press F8 in game and ValeLoot opens the default browser on its own tiny HTTP server, bound to
+ * 127.0.0.1 and nothing else. There is no folder to grant, no file to find and no picker: the same
+ * three things the file mode reads out of three files arrive in one payload, and a save is a POST
+ * the mod writes for us.
+ *
+ * EVERY url here is RELATIVE. From the served page they resolve against 127.0.0.1:<port> and are
+ * same-origin; from a `file://` page an absolute loopback url would be a cross-origin request with a
+ * null origin, which fails in a way indistinguishable from "the port is busy" — so this page never
+ * writes one, and file mode is a mode it falls into rather than a request it makes.
+ */
+const HEALTH_URL = 'api/health';
+const STATE_URL = 'api/state';
+const FILTER_URL = 'api/filter';
+
+/**
+ * Which mode, decided ONCE, by asking rather than by guessing.
+ *
+ * The url alone is not evidence. A page served over loopback whose mod has since exited is still on
+ * an http url, and believing the url there produces the one failure this page must never have: a
+ * Save button that reports success into a socket nobody is listening on. So the protocol only says
+ * whether asking is possible, and the answer to `api/health` decides.
+ */
+async function probeServed() {
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') return false;
+  try {
+    const response = await fetch(HEALTH_URL, { cache: 'no-store' });
+    if (!response.ok) return false;
+    const body = await response.json();
+    // A 200 is not enough: anything can serve a folder listing on a port. `{ok:true}` is the mod.
+    return !!body && body.ok === true;
+  } catch (error) { return false; }
+}
+
+/**
+ * Read the state, and tell the two failures apart.
+ *
+ * A REFUSAL is not a lost connection. The mod answers 503 with a reason when it cannot read the
+ * filter file, and it never sends `"filter": ""` instead — because a blank editor beside a live Save
+ * button is one click from erasing rules that do exist. So an answered failure is flagged, and the
+ * caller keeps the socket, keeps the buffer and holds the Save rather than dropping to file mode.
+ */
+async function fetchState() {
+  const response = await fetch(STATE_URL, { cache: 'no-store' });
+  if (response.ok) return response.json();
+  const body = await response.json().catch(() => null);
+  const failure = new Error(body && body.error ? String(body.error)
+    : 'the mod answered ' + response.status + ' ' + response.statusText);
+  failure.answered = true;
+  throw failure;
+}
+
+/**
+ * Hold the Save when there is nothing authoritative to save over.
+ *
+ * Separate from the error count, because they are different reasons and `refresh` recomputes that one
+ * on every keystroke. A held Save is disabled until a read actually delivers the mod's own text.
+ */
+function holdSave(reason) {
+  saveHeld = reason || null;
+  $('save').disabled = !!saveHeld || (plan ? plan.errors.length > 0 : false);
+}
+
+/** The disclosure, and the only place it is worded. Visible in the footer for as long as it is true. */
+function renderConnection() {
+  const box = $('conn');
+  if (mode !== 'served' && !served.lost) { box.className = 'conn'; box.innerHTML = ''; return; }
+  const where = '127.0.0.1:' + (served.port !== null ? served.port : location.port || '?');
+  if (served.lost) {
+    box.className = 'conn lost';
+    box.innerHTML = '<i></i>the mod stopped answering on <b>' + esc(where)
+      + '</b> — press re-read to reconnect';
+    return;
+  }
+  box.className = 'conn on';
+  box.innerHTML = '<i></i>served by ValeLoot on <b>' + esc(where)
+    + '</b> — this address is reachable only from this machine, and nothing you type here leaves it'
+    + (served.version ? ' <em>v' + esc(served.version) + '</em>' : '');
+}
+
+/**
+ * One payload in, all three things out.
+ *
+ * `keepText` is the re-read case: a player who has just looted wants a fresh bag, not their unsaved
+ * rules thrown away and replaced by what is on disk. Silently overwriting the textarea from a
+ * background read would be the worst kind of data loss this page could manage, so the first read
+ * takes the mod's text and every later one leaves the editor alone.
+ *
+ * Returns whether it replaced a HELD buffer, which the caller has to say out loud: the text it
+ * overwrote was a placeholder the player may nonetheless have typed into while Save was held.
+ */
+function applyState(state, keepText) {
+  const meta = state.mod || {};
+  served.port = Number.isFinite(Number(meta.port)) ? Number(meta.port) : null;
+  served.version = meta.version ? String(meta.version) : null;
+  served.coverage = typeof state.bagCoverage === 'string' ? state.bagCoverage : null;
+  served.lost = false;
+  const catalog = state.catalog || {};
+  served.catalogReady = catalog.ready !== false;
+  // Only ever from a real string, and adopted when the buffer is not yet the player's: `keepText` is
+  // the re-read case, but a HELD save means no read has ever supplied the rules, so this one may.
+  let released = false;
+  if (!keepText || saveHeld) {
+    if (typeof state.filter === 'string') {
+      released = saveHeld !== null && keepText;
+      loadFilterText(state.filter);
+      holdSave(null);
+    } else holdSave('the mod sent no filter text');
+  }
+  setVocab(vocabFromState(state));
+  setBag(bagFromState(state));
+  $('footpath').textContent = FILTER_FILE;
+  renderConnection();
+  return released;
+}
+
+/** What to say after a read landed — including the two things the payload can be honestly short of. */
+function reportState(first, released) {
+  if (released) {
+    say('ValeLoot can read your rules again, so the placeholder on screen has been REPLACED by the '
+      + 'real ones — anything you typed while Save was held is gone from here. '
+      + bag.items.length + ' item(s) in your bag.');
+    return;
+  }
+  if (!served.catalogReady) {
+    say('Read your rules and bag. The game\u2019s item catalog is still loading, so name and type '
+      + 'autocomplete is empty for now — press re-read in a moment and it will fill in.');
+    return;
+  }
+  if (!bag.items.length) {
+    say('Read your rules. Your bag is empty so far — ValeLoot learns an item the first time it draws '
+      + 'it, so open your bag in game, scroll it, then press re-read.');
+    return;
+  }
+  say((first ? 'Read straight from the game: ' : 'Fresh from the game: ')
+    + bag.items.length + ' item(s) in your bag and ' + vocab.items.length + ' item name(s) to type against.',
+  false, true);
+}
+
+/**
+ * The backend went away mid-session.
+ *
+ * Not a dialog and not a silent failure: the editor keeps everything the player has typed, the mode
+ * drops to the file mode's honest capabilities — download, not save — and the footer says which
+ * address stopped answering. Re-read re-probes, so a mod that is merely mid-restart costs one click.
+ */
+function loseConnection(reason) {
+  mode = 'file';
+  served.lost = true;
+  renderConnection();
+  applyModeChrome();
+  say('ValeLoot is no longer answering' + (reason ? ' (' + reason + ')' : '')
+    + '. Nothing was written. Your rules are still here — use download to keep a copy, or press '
+    + 're-read once the game is back and this page reconnects.', true);
+}
+
+/**
+ * A read failed. Which kind decides whether the page is still served.
+ *
+ * The mod ANSWERING with a reason means the socket is fine and only the file was not: staying served
+ * keeps Save pointed at the thing that can actually write it, and the Save is held rather than aimed
+ * at a buffer no read has ever filled. A transport failure is the other case, and only that one is a
+ * lost connection.
+ */
+function failedRead(error) {
+  const reason = error && error.message ? error.message : String(error);
+  if (error && error.answered) {
+    served.lost = false;
+    renderConnection();
+    holdSave(reason);
+    say('ValeLoot is running but could not read your rules: ' + reason + ' \u2014 nothing on screen has '
+      + 'been replaced, and Save is held until it can read them, so an unreadable file cannot be '
+      + 'overwritten by a blank one. Press re-read to try again.', true);
+    return;
+  }
+  loseConnection(reason);
+}
+
+async function saveToMod() {
+  const problems = plan ? plan.errors.length : 0;
+  if (problems) { say(problems + ' problem(s) to fix first — each is marked on its line in the Text tab.', true); return; }
+  const button = $('save');
+  button.disabled = true;
+  say('writing your rules\u2026');
+  try {
+    const response = await fetch(FILTER_URL, {
+      method: 'POST',
+      // The mod writes these bytes verbatim, so the charset is stated rather than left to a guess:
+      // rule names carry item names, and item names in this game are not ASCII.
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: src.value,
+      cache: 'no-store',
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || !body || body.ok !== true) {
+      // The mod's own reason, verbatim — it knows the path and the permission, and a paraphrase here
+      // would be this page inventing a cause for a failure it did not have.
+      const reason = body && body.error ? String(body.error)
+        : 'the mod answered ' + response.status + ' ' + response.statusText;
+      say('ValeLoot did not write the file: ' + reason + ' \u2014 nothing changed in game, and what is '
+        + 'on screen here is still the only copy of these edits.', true);
+      return;
+    }
+    const rules = plan ? plan.parsed.rules.length : 0;
+    say('Saved ' + rules + ' rule(s), ' + body.bytes + ' bytes. Your bag recolours on the NEXT inventory '
+      + 'redraw \u2014 open your bag, or scroll it, and the colours change. Nothing moves until it '
+      + 'redraws, so if it still looks the same, scroll once before going looking for a mistake.',
+    false, true);
+  } catch (error) {
+    loseConnection(error && error.message ? error.message : String(error));
+  } finally {
+    holdSave(saveHeld);
+  }
+}
+
+/** The header's Save, routed by mode — and never labelled as more than the mode can do. */
+function saveFilter() {
+  if (saveHeld) { say('Save is held: ' + saveHeld + '. Press re-read first.', true); return undefined; }
+  return mode === 'served' ? saveToMod() : saveToFolder();
+}
+
+/**
+ * Re-read, routed by mode. Deliberately quiet: it is the control for "I just looted", which happens
+ * far more often than anything else on this page, and it must not cost a reload or a re-grant.
+ */
+async function reread() {
+  if (mode === 'served') {
+    try {
+      reportState(false, applyState(await fetchState(), true));
+    } catch (error) {
+      failedRead(error);
+    }
+    return;
+  }
+  // File mode, including a served session that lost its mod: try to reconnect before falling back to
+  // the folder, because a mod that came back is the likelier explanation than a moved folder.
+  if (served.lost && (await probeServed())) {
+    await enterServed(true);
+    return;
+  }
+  if (!dirHandle) { $('gate').style.display = 'flex'; return; }
+  if (!(await ensurePermission(dirHandle, false))) { $('gate').style.display = 'flex'; return; }
+  await loadFromDir();
+}
+
+/**
+ * What the chrome says about what it can do, right now.
+ *
+ * Keyed on the CURRENT capability, not on the browser's: a served session whose mod exited leaves an
+ * API-capable browser holding no granted folder, and that combination labelled "Save to the game" is
+ * precisely the button that lies. So it promises a save only when there is somewhere to save to.
+ */
+function applyModeChrome() {
+  const servedNow = mode === 'served';
+  const canWrite = servedNow || dirHandle !== null;
+  $('save').textContent = canWrite ? 'Save to the game' : 'Download the filter';
+  $('save').title = servedNow
+    ? 'write these rules through the mod — takes effect on the next inventory redraw'
+    : dirHandle !== null ? 'write valeloot-filter.txt into the folder you granted'
+      : hasFS ? 'no folder granted yet — this downloads a copy instead'
+        : 'this browser cannot write into the game folder';
+  $('reload').title = servedNow
+    ? 'pull a fresh bag and rules from the game — do this after looting'
+    : 're-read all three files from the folder';
+}
+
+async function enterServed(again) {
+  mode = 'served';
+  served.lost = false;
+  $('gate').style.display = 'none';
+  applyModeChrome();
+  try {
+    const released = applyState(await fetchState(), !!again);
+    reportState(!again, released);
+  } catch (error) {
+    failedRead(error);
+  }
+}
+
+// ───────────────────── the item action strip ─────────────────────
+function renderAct() {
+  const host = $('act');
+  const item = bag.items.find((i) => i.uid === selectedUid);
+  if (!item) { host.className = ''; host.innerHTML = ''; return; }
+  const mark = plan ? plan.marks.get(item.uid) : null;
+  const claim = !mark ? 'no rule claims it'
+    : mark.kind === 'pinned' ? 'pinned — always shown'
+      : mark.kind === 'muted' ? (mark.by === undefined ? 'silenced by name' : 'silenced by rule ' + (mark.by + 1))
+        : 'rule ' + (mark.by + 1) + ' \u2014 ' + plan.blocks[mark.by].name;
+  host.className = 'on';
+  host.innerHTML = '<div class="top"><h3>' + esc(item.name) + '</h3>'
+    + '<span class="meta">' + esc(item.slotType) + (item.refine ? ' · +' + item.refine : '')
+    + ' · ' + item.topRolls + ' top roll' + (item.topRolls === 1 ? '' : 's')
+    + ' · ' + (item.avgRoll === null ? 'no average' : Math.round(item.avgRoll) + '% average')
+    + ' · ' + esc(claim) + '</span></div>'
+    + '<div class="row"><span class="lbl">rule from this</span>'
+    + '<button class="mk" data-mk="name">Name <b>"' + esc(item.name) + '"</b></button>'
+    + '<button class="mk" data-mk="type">Type <b>' + esc(item.slotType) + '</b></button>'
+    + (item.topRolls ? '<button class="mk" data-mk="top">TopRolls <b>&gt;= ' + item.topRolls + '</b></button>' : '')
+    + (item.lines.length ? '<button class="mk" data-mk="stat">Stat <b>' + esc(item.lines[0].stat) + ' &gt;= '
+      + (item.lines[0].rollPct === null ? 90 : Math.min(100, item.lines[0].rollPct)) + '%</b></button>' : '')
+    + '<span class="lbl" style="margin-left:12px">just this one</span>'
+    + '<button class="mk" data-mk="pin">always show it</button>'
+    + '<button class="mk" data-mk="mute">never show it</button>'
+    + '<button class="btn tiny" data-mk="close">close</button></div>';
+}
+
+function ruleFromItem(kind) {
+  const item = bag.items.find((i) => i.uid === selectedUid);
+  if (!item) return;
+  const quoted = '"' + item.name.replace(/"/g, "'") + '"';
+  if (kind === 'pin') return appendText('AlwaysShow ' + quoted);
+  if (kind === 'mute') return appendText('AlwaysHide ' + quoted);
+  let body;
+  if (kind === 'name') body = '    Name      ' + quoted;
+  else if (kind === 'type') body = '    Type      ' + item.slotType;
+  else if (kind === 'top') body = '    TopRolls  >= ' + item.topRolls;
+  else {
+    const line = item.lines[0];
+    body = '    Stat      ' + line.stat + ' >= ' + (line.rollPct === null ? 90 : Math.min(100, line.rollPct)) + '%';
+  }
+  const title = kind === 'type' ? 'Every ' + item.slotType : item.name;
+  appendText('Show "' + title.replace(/"/g, "'") + '"\n' + body + '\n    Highlight mark');
+}
+
+// ───────────────────── the hover note ─────────────────────
+function showNote(event, item) {
+  const mark = plan ? plan.marks.get(item.uid) : null;
+  const box = $('note');
+  let html = '';
+  if (mark && (mark.kind === 'lit' || mark.kind === 'pinned')) {
+    // Exactly the line TooltipInject writes onto the game's own tooltip, in the rule's colour.
+    html += '<div class="modline" style="color:' + esc(mark.color) + '">'
+      + (mark.label ? '<b>' + esc(mark.label) + '</b> \u2014 ' : '')
+      + (mark.kind === 'pinned' ? esc(mark.rule) : 'rule "' + esc(mark.rule) + '"') + '</div>';
+  } else if (mark && mark.kind === 'muted') {
+    html += '<div class="modline"><em>silenced — no colour, no mark, no sound</em></div>';
+  } else {
+    html += '<div class="modline"><em>no rule claims this — the cell stays as the game drew it</em></div>';
+  }
+  html += '<h4>' + esc(item.name) + '</h4>'
+    + '<div class="meta">' + esc(item.slotType) + (item.refine ? ' · +' + item.refine : '')
+    + (item.favorite ? ' · favourited' : '')
+    + ' · ' + (item.avgRoll === null ? 'no average' : Math.round(item.avgRoll) + '% avg')
+    + ' · ' + item.topRolls + ' top roll' + (item.topRolls === 1 ? '' : 's')
+    + ' <span class="rollhi">(at ' + (plan ? plan.threshold : 90) + '%)</span></div>';
+  html += '<div class="st">' + (item.lines.length
+    ? item.lines.map((l) => esc(l.stat) + ' ' + (l.printed === null ? '<s>?</s>' : '+' + l.printed)
+      + (l.rollPct === null ? '' : (l.rollPct > 100 ? ' <u>' + l.rollPct + '% over</u>' : ' ' + l.rollPct + '%'))).join('<br>')
+    : '<em>no substat lines</em>') + '</div>';
+  box.innerHTML = html;
+  box.style.display = 'block';
+  const w = box.offsetWidth;
+  const h = box.offsetHeight;
+  box.style.left = Math.min(event.clientX + 16, window.innerWidth - w - 10) + 'px';
+  box.style.top = Math.max(8, Math.min(event.clientY + 16, window.innerHeight - h - 10)) + 'px';
+}
+
+// ───────────────────── the loop ─────────────────────
+function refresh() {
+  plan = evaluate(src.value);
+  const problems = plan.errors.length;
+  $('save').disabled = problems > 0 || saveHeld !== null;
+  $('tabcnt').textContent = problems
+    ? problems + ' problem' + (problems === 1 ? '' : 's')
+    : plan.parsed.rules.length + ' rule' + (plan.parsed.rules.length === 1 ? '' : 's');
+  $('tabcnt').className = 'cnt' + (problems ? ' bad' : '');
+  paint();
+  renderGrid();
+  renderTally();
+  renderCascade();
+  renderAct();
+  coach();
+}
+
+function showTab(name) {
+  for (const button of document.querySelectorAll('.tabs button[data-tab]')) {
+    button.classList.toggle('on', button.dataset.tab === name);
+  }
+  for (const pane of document.querySelectorAll('.pane')) pane.classList.toggle('on', pane.id === 'pane-' + name);
+  if (name === 'text') { paint(); src.focus(); }
+}
+
+// ───────────────────── wiring ─────────────────────
+document.querySelector('.tabs').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-tab]');
+  if (button) showTab(button.dataset.tab);
+});
+
+$('cascade').addEventListener('click', (event) => {
+  const hit = event.target.closest('[data-open],[data-pick],[data-color],[data-level],[data-sound],[data-verb],'
+    + '[data-del],[data-jump],[data-line],[data-up],[data-t],[data-audition],[data-show],[data-unpin],[data-unmute]');
+  if (!hit) return;
+  const d = hit.dataset;
+  if (d.audition !== undefined) return audition(d.audition);
+  if (d.open !== undefined) {
+    const index = Number(d.open);
+    if (openRule === index) { openRule = null; } else { openRule = index; openPicker = null; }
+    return renderCascade();
+  }
+  if (d.pick !== undefined) { openPicker = openPicker === d.pick ? null : d.pick; return renderCascade(); }
+  if (d.color !== undefined) {
+    // The default colour is not written out — the parser supplies it — so choosing it deletes the
+    // line rather than adding one that says what would have happened anyway.
+    const block = plan.blocks[openRule];
+    const fallback = block.kind === 'hide' ? HIDE_DEFAULT_COLOR : SHOW_DEFAULT_COLOR;
+    return setDeco(openRule, 'Color', d.color === fallback ? null : d.color);
+  }
+  if (d.level !== undefined) return setDeco(openRule, 'Highlight', d.level === 'dot' ? null : d.level);
+  if (d.sound !== undefined) return setDeco(openRule, 'Sound', d.sound || null);
+  if (d.verb !== undefined) {
+    const block = plan.blocks[Number(d.verb)];
+    return setHead(Number(d.verb), block.kind === 'hide' ? 'show' : 'hide', block.name);
+  }
+  if (d.del !== undefined) return removeBlock(Number(d.del));
+  if (d.up !== undefined) return moveRule(Number(d.up), Number(d.up) - 1);
+  if (d.jump !== undefined) return jumpToLine(plan.blocks[Number(d.jump)].head);
+  if (d.line !== undefined) return jumpToLine(Number(d.line));
+  if (d.t !== undefined) return appendText(TEMPLATES[d.t]);
+  if (d.show !== undefined) { selectedUid = d.show; renderGrid(); renderAct(); return; }
+  if (d.unpin !== undefined || d.unmute !== undefined) return dropOverride(d.unpin || d.unmute);
+});
+
+/** Remove one name from an AlwaysShow/AlwaysHide list, deleting the line when it empties. */
+function dropOverride(name) {
+  const lines = src.value.split('\n');
+  const wanted = name.toLowerCase();
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].replace(COMMENT_RE, '$1').trim();
+    const words = trimmed.split(/\s+/);
+    if (!OVERRIDE_WORDS[(words[0] || '').toLowerCase()]) continue;
+    const kept = [];
+    const pattern = /"([^"]*)"|([^,]+)/g;
+    let match;
+    while ((match = pattern.exec(words.slice(1).join(' '))) !== null) {
+      const piece = unquote((match[1] !== undefined ? match[1] : match[2]).trim());
+      if (piece && piece.toLowerCase() !== wanted) kept.push(piece);
+    }
+    if (kept.length) lines[i] = words[0] + ' ' + kept.map((p) => '"' + p + '"').join(', ');
+    else lines.splice(i, 1);
+    return apply(lines);
+  }
+}
+
+$('cascade').addEventListener('input', (event) => {
+  if (event.target.id === 'anycolor') setDeco(openRule, 'Color', event.target.value);
+});
+$('cascade').addEventListener('change', (event) => {
+  if (event.target.id === 'ownsound') {
+    const name = event.target.value.trim();
+    if (name && !VL.normalizeSoundName(name)) {
+      say('"' + name + '" is not a usable sound name — letters, digits, dot, dash and underscore only.', true);
+      return;
+    }
+    setDeco(openRule, 'Sound', name || null);
+  }
+});
+
+/** Keyboard reordering on the row itself: a drag handle without one is not a control. */
+$('cascade').addEventListener('keydown', (event) => {
+  const row = event.target.closest ? event.target.closest('.rule') : null;
+  if (!row || !event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+  event.preventDefault();
+  const index = Number(row.dataset.r);
+  moveRule(index, index + (event.key === 'ArrowUp' ? -1 : 1));
+});
+
+let dragFrom = null;
+$('cascade').addEventListener('dragstart', (event) => {
+  const row = event.target.closest('.rule');
+  if (!row) return;
+  dragFrom = Number(row.dataset.r);
+  row.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', String(dragFrom));
+});
+$('cascade').addEventListener('dragover', (event) => {
+  if (dragFrom === null) return;
+  const row = event.target.closest('.rule');
+  if (!row) return;
+  event.preventDefault();
+  const box = row.getBoundingClientRect();
+  for (const other of $('cascade').querySelectorAll('.rule')) other.classList.remove('drop-before', 'drop-after');
+  row.classList.add(event.clientY > box.top + box.height / 2 ? 'drop-after' : 'drop-before');
+});
+$('cascade').addEventListener('drop', (event) => {
+  if (dragFrom === null) return;
+  const row = event.target.closest('.rule');
+  if (!row) return;
+  event.preventDefault();
+  const box = row.getBoundingClientRect();
+  // Removing the dragged row first shifts every index below it up by one — the off-by-one that made
+  // a downward drag land one short.
+  let to = Number(row.dataset.r) + (event.clientY > box.top + box.height / 2 ? 1 : 0);
+  if (to > dragFrom) to--;
+  const from = dragFrom;
+  dragFrom = null;
+  moveRule(from, to);
+});
+$('cascade').addEventListener('dragend', () => {
+  dragFrom = null;
+  for (const other of $('cascade').querySelectorAll('.rule')) {
+    other.classList.remove('drop-before', 'drop-after', 'dragging');
+  }
+});
+
+/**
+ * Point at a rule, see its items light up in the bag.
+ *
+ * Delegated on the container rather than bound per row, because the cascade is rebuilt on every edit
+ * and per-row listeners would leak one set per keystroke. `pointerover` rather than `mouseenter` for
+ * the same reason — it bubbles, so one listener covers rows that do not exist yet.
+ */
+function pointAtRule(index) {
+  const grid = $('grid');
+  if (index === null) {
+    grid.classList.remove('pointing');
+    for (const cell of grid.querySelectorAll('.hit')) cell.classList.remove('hit');
+    return;
+  }
+  for (const cell of grid.querySelectorAll('.cell')) {
+    cell.classList.toggle('hit', cell.dataset.by === String(index));
+  }
+  grid.classList.add('pointing');
+}
+$('cascade').addEventListener('pointerover', (event) => {
+  const row = event.target.closest ? event.target.closest('.rule') : null;
+  pointAtRule(row ? Number(row.dataset.r) : null);
+});
+$('cascade').addEventListener('pointerleave', () => pointAtRule(null));
+// A keyboard user reorders with alt+arrow and never generates a pointer event, so focus has to do the
+// same job — otherwise the one control that most needs the preview is the one that cannot see it.
+$('cascade').addEventListener('focusin', (event) => {
+  const row = event.target.closest ? event.target.closest('.rule') : null;
+  if (row) pointAtRule(Number(row.dataset.r));
+});
+
+$('grid').addEventListener('mousemove', (event) => {
+  const cell = event.target.closest('[data-uid]');
+  if (!cell) { $('note').style.display = 'none'; return; }
+  const item = bag.items.find((i) => i.uid === cell.dataset.uid);
+  if (item) showNote(event, item);
+});
+$('grid').addEventListener('mouseleave', () => { $('note').style.display = 'none'; });
+$('grid').addEventListener('click', (event) => {
+  const cell = event.target.closest('[data-uid]');
+  if (!cell) return;
+  selectedUid = selectedUid === cell.dataset.uid ? null : cell.dataset.uid;
+  renderGrid();
+  renderAct();
+});
+$('grid').addEventListener('keydown', (event) => {
+  const cell = event.target.closest('[data-uid]');
+  if (!cell || (event.key !== 'Enter' && event.key !== ' ')) return;
+  event.preventDefault();
+  selectedUid = cell.dataset.uid;
+  renderGrid();
+  renderAct();
+});
+$('act').addEventListener('click', (event) => {
+  const hit = event.target.closest('[data-mk]');
+  if (!hit) return;
+  if (hit.dataset.mk === 'close') { selectedUid = null; renderGrid(); return renderAct(); }
+  ruleFromItem(hit.dataset.mk);
+});
+
+src.addEventListener('input', () => { refresh(); showAC(false); });
+src.addEventListener('scroll', syncScroll);
+src.addEventListener('blur', () => setTimeout(hideAC, 120));
+src.addEventListener('click', coach);
+src.addEventListener('keyup', (event) => { if (event.key.startsWith('Arrow')) coach(); });
+src.addEventListener('keydown', (event) => {
+  if (event.ctrlKey && event.code === 'Space') { event.preventDefault(); showAC(true); return; }
+  if (!acItems.length) return;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    acIndex = (acIndex + (event.key === 'ArrowDown' ? 1 : acItems.length - 1)) % acItems.length;
+    [...document.querySelectorAll('#ac div')].forEach((el, i) => el.classList.toggle('on', i === acIndex));
+    return;
+  }
+  if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); accept(acIndex); return; }
+  if (event.key === 'Escape') hideAC();
+});
+
+$('save').addEventListener('click', saveFilter);
+$('download').addEventListener('click', downloadText);
+$('reload').addEventListener('click', reread);
+$('tidy').addEventListener('click', () => {
+  // Reprints the COMPILED rules, so it drops comments — offered as a button you press, never as
+  // something that happens to your file while you are typing in it.
+  if (plan.errors.length) { say('tidy needs a filter that parses — fix the marked lines first.', true); return; }
+  setText(VL.formatLootFilter(plan.parsed), true);
+});
+$('pickdir').addEventListener('click', pickDirectory);
+
+function wireManual(id, handler) {
+  $(id).addEventListener('change', async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    handler(await file.text());
+    $('gate').style.display = 'none';
+    say('Loaded ' + file.name + ' by hand. Saving will download a copy rather than write into your game folder.');
+  });
+}
+wireManual('fileFilter', loadFilterText);
+wireManual('fileItems', loadItemsText);
+wireManual('fileBag', loadBagText);
+
+// ───────────────────── the guide ─────────────────────
+$('helpbody').innerHTML = ''
+  + '<h3>How a filter runs</h3>'
+  + '<p>ValeLoot reads your rules top to bottom and stops at the <b>first</b> one that matches an item. '
+  + 'That is why the numbers on the left matter more than anything else on this page: a rule below one '
+  + 'that already claimed an item never sees it.</p>'
+  + '<p><code>AlwaysHide</code> beats every rule, then <code>AlwaysShow</code>, then the rules in order.</p>'
+  + '<h3>The two Stat forms</h3>'
+  + '<table><tr><td>Stat Agi &gt;= 3</td><td>the <b>printed value</b> — the "+3" the game shows on the line.</td></tr>'
+  + '<tr><td>Stat Agi &gt;= 90%</td><td><b>roll quality</b> — where that number sits in the stat\u2019s legal range.</td></tr></table>'
+  + '<p>They are not two ways of saying one thing. A line that rolled 0% still prints roughly two thirds '
+  + 'of its maximum, so <code>&gt;= 3</code> is satisfied by nearly everything you own while '
+  + '<code>&gt;= 90%</code> is satisfied by almost nothing. Type either one in the Text tab and this page '
+  + 'counts both readings against your real bag.</p>'
+  + '<h3>Conditions</h3>'
+  + '<table>' + CONDITIONS.map(([w, h]) => '<tr><td>' + w + '</td><td>' + esc(h) + '</td></tr>').join('') + '</table>'
+  + '<h3>Sounds</h3>'
+  + '<p>Five are built in and synthesised by the mod, so a fresh install has usable sounds: '
+  + VL.BUILTIN_LOOT_SOUNDS.map((s) => '<code>' + s + '</code>').join(', ') + '. '
+  + 'Any other name is a file of yours: drop a <code>.wav</code> into '
+  + '<code>BepInEx/config/valeloot-sounds/</code> and write its name on the <code>Sound</code> line. '
+  + 'A sound plays when you <b>pick the item up</b> — bag open or closed, never on a repaint.</p>'
+  + '<h3>What the language has and ValeLoot does not</h3>'
+  + '<p>Parts of this grammar ask about a reference catalog of every item in the game and about the '
+  + 'gear you are wearing. '
+  + 'ValeLoot has neither, and rather than answering a different question it <b>throws the whole block '
+  + 'away</b>. So <code>SharedStats</code>, <code>Unknown</code>, <code>Known</code> and '
+  + '<code>Verdict</code> are errors here, and so is a maximum on <code>Refine</code>.</p>'
+  + '<h3>Where this page came from</h3>'
+  + '<p>There are two. <b>Press F8 in game</b> and ValeLoot opens this editor in your browser and '
+  + 'serves it itself, from a small HTTP server bound to <code>127.0.0.1</code> — the loopback '
+  + 'address, which is your own machine and nothing else. Then there is no folder to grant: your '
+  + 'rules, your bag and every item name come from the running game, and <b>Save</b> hands the text '
+  + 'back for the mod to write. The footer says so, with the port, whenever that is what is '
+  + 'happening.</p>'
+  + '<p>That server carries this page, your rules and your bag, and nothing else. It is not connected '
+  + 'to the game\u2019s own network traffic, reads no packets, and answers only to this machine. '
+  + 'Nothing you type here leaves it.</p>'
+  + '<p>The other way is to open the file by hand, which is what you are doing if you were asked for '
+  + 'a folder. That still works, offline, with the game shut, and it is the fallback if something on '
+  + 'your machine has taken the port.</p>'
+  + '<h3>The three files</h3>'
+  + '<table><tr><td>valeloot-filter.txt</td><td>your rules. The only one this page writes.</td></tr>'
+  + '<tr><td>valeloot-items.txt</td><td>generated: every item and stat name, for autocomplete.</td></tr>'
+  + '<tr><td>valeloot-bag.txt</td><td>generated: your bag, for the preview. Everything ValeLoot has seen '
+  + 'this session — scroll your bag or switch tabs to add more.</td></tr></table>'
+  + '<p>Editing either generated file does nothing. Both appear after you log in and open your bag once. '
+  + 'Served over F8 they are not read at all — the same three things come straight from the game.</p>';
+
+// ───────────────────── first run ─────────────────────
+$('gatecaveat').innerHTML = hasFS
+  ? 'After you pick the folder, <b>Save</b> writes <code>valeloot-filter.txt</code> straight into it and '
+    + 'ValeLoot reloads on the next inventory redraw. Nothing else in the folder is touched.'
+  : '<b>This browser cannot write files.</b> The one-click save needs the File System Access API, which '
+    + 'today means Chrome or Edge — open this page there for the full experience. Here you can still open '
+    + 'the three files by hand, edit and check everything, and download the result to copy into '
+    + 'BepInEx/config/ yourself. There is no Save button that pretends to work.';
+/**
+ * Without the API, the manual path is not the alternative — it IS the path.
+ *
+ * Hiding the folder button alone left three quiet boxes under the heading "or, without granting a
+ * folder": an "or" with nothing on the other side of it, and no visible primary action on a page whose
+ * whole first job is to get you to the editor. So relabel it as the instruction it now is, and make the
+ * boxes look like the buttons they are.
+ */
+if (!hasFS) {
+  $('pickdir').style.display = 'none';
+  $('orline').textContent = 'open your files \u2014 start with your rules';
+  $('orline').style.color = 'var(--ink)';
+  document.querySelector('.manual').classList.add('primary');
+}
+
+/**
+ * Boot, in one order, with the mode ASKED FOR rather than assumed.
+ *
+ * The starter text and the file-mode chrome go up first so the page is never blank and never claims a
+ * capability it has not confirmed; then `probeServed` asks the one question that decides everything
+ * else. Served, the player never sees the gate at all — that is the whole point of the F8 path, and a
+ * flash of a folder-picker on the way to an editor that needed no folder would undo it.
+ */
+async function boot() {
+  setText(STARTER);
+  applyModeChrome();
+  renderFileState();
+  if (await probeServed()) return enterServed(false);
+  say(hasFS ? 'Choose your BepInEx/config folder to begin.'
+    : 'Open your filter file to begin — this browser cannot write into the game folder.');
+}
+const booted = boot();
+
+/**
+ * The load paths, exposed on purpose.
+ *
+ * Granting a folder needs a user gesture and a native dialog nothing can click, so the file-backed
+ * paths are unreachable from a driven browser unless they can be called with a `File`. That is a
+ * testing requirement, and faking the parser instead would test a different program.
+ */
+window.ValeLootEditor = {
+  loadFilterFile: async (file) => loadFilterText(await file.text()),
+  loadItemsFile: async (file) => loadItemsText(await file.text()),
+  loadBagFile: async (file) => loadBagText(await file.text()),
+  loadFilterText, loadItemsText, loadBagText,
+  setText, moveRule, setDeco, showTab, appendText,
+  openRule: (index) => { openRule = index; openPicker = null; renderCascade(); },
+  openPicker: (name) => { openPicker = name; renderCascade(); },
+  dismissGate: () => { $('gate').style.display = 'none'; },
+  // Boot is async now, because the mode is a question asked over a socket. A driven browser has to be
+  // able to wait for the answer instead of racing it.
+  ready: () => booted,
+  reread,
+  state: () => ({
+    text: src.value,
+    mode,
+    served: { port: served.port, version: served.version, lost: served.lost, coverage: served.coverage },
+    gate: $('gate').style.display !== 'none',
+    errors: plan.errors,
+    rules: plan.blocks.map((b, i) => ({
+      index: i, name: b.name, kind: b.kind, color: blockColor(b), level: blockLevel(b),
+      count: b.count, alone: b.alone, blind: b.blind, errors: b.errors.length,
+    })),
+    lit: plan.lit, silenced: plan.silenced, untouched: plan.untouched, total: plan.total,
+    threshold: plan.threshold, vocab: { items: vocab.items.length, stats: vocab.stats.length },
+  }),
+};
+</script>
+</body>
+</html>

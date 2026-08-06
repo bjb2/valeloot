@@ -1,0 +1,44 @@
+Third-party software bundled with ValeLoot
+==========================================
+
+BepInEx 6 (IL2CPP), bleeding-edge build be.785
+----------------------------------------------
+
+The "with BepInEx" download of ValeLoot contains BepInEx so that installing is one unzip instead of
+"first go and find the right BepInEx build". That matters more than convenience: BepInEx 5 and the stable
+6 release do NOT load plugins into an IL2CPP game, and the download page does not make that obvious, so
+the commonest way to fail at installing this mod was picking the wrong one. Bundling removes that choice.
+
+  Project:   BepInEx
+  Version:   6.0.0-be.785  (IL2CPP, win-x64)
+  Source:    https://github.com/BepInEx/BepInEx
+  Build:     https://builds.bepinex.dev/projects/bepinex_be  (build 785)
+  Licence:   GNU Lesser General Public License, version 2.1 — see BepInEx-LICENSE.txt beside this file
+
+BepInEx is included **unmodified**, exactly as published by its authors. It is not a part of ValeLoot and
+ValeLoot claims no copyright in it. If you already have BepInEx 6 IL2CPP installed, take the plain
+`ValeLoot-<version>.zip` instead — it contains only the plugin.
+
+Under the LGPL you are entitled to the source of the bundled library and to replace it with your own
+build: the source is at the URL above, and BepInEx is loaded dynamically from `BepInEx/core/`, so
+replacing those files with another 6.x IL2CPP build is supported and does not require rebuilding ValeLoot.
+
+ValeLoot itself is a separate work that uses BepInEx's published plugin API. Its own licence and terms
+are in its README.
+
+Doorstop
+--------
+
+The BepInEx distribution embeds Unity Doorstop (`winhttp.dll`, `doorstop_config.ini`), which is how the
+runtime is loaded before the game starts. It ships under BepInEx's own distribution and carries its own
+notices inside that archive; see https://github.com/NeighTools/UnityDoorstop.
+
+NOTICES
+-------
+
+Everything in this download that is not listed above is ValeLoot's own work, under the MIT licence in
+the LICENSE file of https://github.com/bjb2/valeloot.
+
+That includes the loot-filter parser compiled into the rule editor page. The page carries it as
+ordinary inlined JavaScript rather than loading it from anywhere, so the editor works offline; it is
+MIT code from this project, not a third-party library, and no other licence applies to it.

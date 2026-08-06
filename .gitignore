@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+dist/
+node_modules/
+
+# The bundled BepInEx distribution, fetched by hand.
+#
+# 33 MB of somebody else's binaries, and `-t:PackageBundle` names the download page when it is
+# missing. A repository that carries it is a repository that ships a redistribution nobody reviewed
+# in every clone, so it stays out and the build target says exactly where to put it.
+tools/BepInEx-IL2CPP-be785.zip
