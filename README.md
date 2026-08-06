@@ -6,6 +6,14 @@ when a matching item is picked up.
 
 It is complete on its own. No companion app, no server, no account, nothing to sign up for.
 
+> ### ⬇ [Download ValeLoot 0.1.0](https://github.com/bjb2/valeloot/releases/download/v0.1.0/ValeLoot-0.1.0-with-BepInEx.zip)
+>
+> Unzip it into your SpiritVale folder, launch the game, press **F8**.
+>
+> **Not the green "Code → Download ZIP" button.** That gives you the source code — a folder called
+> `valeloot-main` full of `.cs` files, which the game cannot load. You want the link above, or the
+> [releases page](https://github.com/bjb2/valeloot/releases/latest).
+
 ![The ValeLoot editor beside the game, the same items lit the same colours in both](docs/valeloot.png)
 
 *Left: the editor, and your rules as text. Middle: what those rules do to your bag. Right: the game's own

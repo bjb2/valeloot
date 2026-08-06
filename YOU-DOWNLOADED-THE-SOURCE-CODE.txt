@@ -1,0 +1,40 @@
+STOP — this folder is the SOURCE CODE, not the mod.
+===================================================
+
+If you are reading this inside a folder called something like "valeloot-main", you clicked the green
+"Code" button on GitHub and got a copy of the source. That is not the thing you install. The game cannot
+load it, and putting this folder in your SpiritVale directory does nothing at all.
+
+You want the packaged download instead:
+
+    https://github.com/bjb2/valeloot/releases/latest
+
+Take the file named:
+
+    ValeLoot-<version>-with-BepInEx.zip
+
+Then:
+
+  1. Delete this folder (the "valeloot-main" one) from your game directory.
+  2. Unzip the file above into your SpiritVale folder — the one that has SpiritVale.exe in it.
+  3. When it is right, SpiritVale.exe, winhttp.dll and a BepInEx folder are all sitting side by side.
+     If instead you see a single folder like "ValeLoot-0.1.0-with-BepInEx", unzip went one level too
+     deep: move everything out of that folder so it sits next to SpiritVale.exe, then delete it.
+  4. Launch the game and press F8.
+
+That is the whole install. Sorry for the detour — GitHub puts the source download in the biggest button
+on the page, and there is nothing this project can do about that except leave this note where you would
+find it.
+
+
+If you actually DID want the source
+-----------------------------------
+
+Then you are in the right place, and there is nothing wrong. Build it with:
+
+    dotnet build                    the plugin
+    bun run build:editor            the editor page
+    dotnet build -t:Package         the plugin-only zip
+    dotnet build -t:PackageBundle   the full download, BepInEx included
+
+See README.md for the rest.
