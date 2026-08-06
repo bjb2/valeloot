@@ -74,9 +74,10 @@ and `System.Net`. The only thing you will find is the editor's loopback server, 
 
 Game staff, replying publicly about a loot-presentation tool:
 
-> "…a tool that basically modify how the loot color is, sound and how it looks in the inventory. This is
-> allowed but as I said we are not responsible for the applications players install and use. It's at your
-> own risk and you are responsible of your own account"
+
+<img width="733" height="94" alt="image" src="https://github.com/user-attachments/assets/9c0fa3d8-48a0-4560-9abe-67c3effba5d3" />
+
+<img width="319" height="167" alt="image" src="https://github.com/user-attachments/assets/fa64bb6b-737c-4c01-84db-810257af73c4" />
 
 **Allowed is not endorsed.** Nobody has approved this mod, nobody is going to, and if something goes wrong
 with your account that is on you. The same warning prints in the log every time the game starts with
