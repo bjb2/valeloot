@@ -35,7 +35,7 @@ function fail(message: string): never {
 }
 
 /**
- * The parser, compiled from the modules the overlay runs.
+ * The parser, compiled from the modules in `src/filter/` that define the language.
  *
  * Not minified: this ships to players inside a mod zip, and someone will open it to check what a
  * file dropped in their game folder actually does. A page that answers that question in a second is

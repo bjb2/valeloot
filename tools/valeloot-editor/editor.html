@@ -720,12 +720,12 @@ function modLint(text) {
       continue;
     }
     if (MOD_REFUSES[key]) { out.push({ line: i + 1, text: trimmed, message: MOD_REFUSES[key], mod: true }); continue; }
-    // A maximum refine: the overlay drops it silently (which WIDENS the block to everything), the
-    // mod refuses it. Refusing is right, so this editor refuses too.
+    // A maximum refine: this page's parser drops it silently (which WIDENS the block to everything),
+    // the mod refuses it. Refusing is right, so this editor refuses too.
     if (key === 'refine' && /^<=?\s*-?\d/.test(rest)) {
       out.push({
         line: i + 1, text: trimmed, mod: true,
-        message: 'Refine takes a minimum only (>=, > or =) — ValeLoot refuses a maximum, and the overlay would drop it and match everything',
+        message: 'Refine takes a minimum only (>=, > or =) — ValeLoot refuses a maximum, and a parser that dropped it would match everything',
       });
     }
   }
