@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:editor": "bun run tools/build-valeloot-editor.ts"
+    "build:editor": "bun run tools/build-valeloot-editor.ts",
+    "check": "bun run tools/check.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
