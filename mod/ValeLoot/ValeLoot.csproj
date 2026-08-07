@@ -146,6 +146,19 @@
     <Copy SourceFiles="$(MSBuildProjectDirectory)/README.txt" DestinationFolder="$(BundlePluginDir)" />
     <Copy SourceFiles="$(MSBuildProjectDirectory)/thirdparty/NOTICE.txt;$(MSBuildProjectDirectory)/thirdparty/BepInEx-LICENSE.txt"
           DestinationFolder="$(BundleStageDir)" />
+    <!--
+      One config file, next to an otherwise untouched BepInEx: `bundle/BepInEx.cfg` turns the Unity
+      log mirror OFF. The game's netcode warns whenever a packet names a NetworkObject the client
+      cannot see, which is harmless, constant, and — once BepInEx puts a console on screen — a
+      synchronous write per line. Vanilla players never saw it because it only went to Unity's
+      Player.log, where it still goes. See the file itself for the full reasoning.
+
+      Bundle ONLY. `Package` deliberately does not ship it: someone who already runs BepInEx has a
+      config of their own, and silently rewriting it would be a far worse trade than a noisy console.
+    -->
+    <MakeDir Directories="$(BundleStageDir)/BepInEx/config" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/bundle/BepInEx.cfg"
+          DestinationFolder="$(BundleStageDir)/BepInEx/config" />
     <Delete Files="$(BundleZipPath)" />
     <ZipDirectory SourceDirectory="$(BundleStageDir)" DestinationFile="$(BundleZipPath)" />
     <RemoveDir Directories="$(BundleStageDir)" />

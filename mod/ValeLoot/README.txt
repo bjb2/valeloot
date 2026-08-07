@@ -232,6 +232,21 @@ it prints are whatever today's build uses. What matters is the shape:
 * "editor server on http://127.0.0.1:38512/" appeared. If it says "could NOT bind", that line names
   the port and the reason; nothing else is affected and F8 opens the local copy instead.
 
+If the console fills with "Spawned NetworkObject was expected to exist but does not for Id N",
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+that is the GAME, not ValeLoot. It is SpiritVale's netcode saying a packet named an object your
+client cannot see - a unit near you casting at a target outside your visibility - and it repeats for
+as long as that goes on, sometimes hundreds of identical lines a second while you stand still at a
+storage NPC or anywhere busy. Vanilla logs every one of them too; you never saw them because they
+only went to AppData\LocalLow\Baikun\SpiritVale\Player.log, where they still go, with full stack
+traces. ValeLoot appears in none of those stacks and hooks nothing on the game's network path.
+
+The with-BepInEx download ships BepInEx/config/BepInEx.cfg with UnityLogListening = false, which
+keeps the game's Unity log out of BepInEx's console - where every line is a synchronous write and
+therefore costs frames. If you brought your own BepInEx, set that one line under [Logging] yourself.
+ValeLoot's own log lines do not come from Unity's log and are unaffected either way.
+
 
 THE EDITOR
 ----------

@@ -256,6 +256,14 @@ with any pack you download; that is between you and whoever made it.
 - **Artifacts have no `Type`.** Match them on rolls, refine or name instead.
 - **Ten items at once make one noise**, not ten. A rule with no conditions claims your whole bag and will
   chime at everything — that is the one way to turn this into a metronome, and it is your own doing.
+- **The console spamming `Spawned NetworkObject was expected to exist` is the game, not ValeLoot.**
+  It is SpiritVale's netcode saying a packet named an object you cannot see — a unit near you casting
+  at something outside your visibility — and it can repeat hundreds of times a second while you stand
+  still, at a storage NPC or anywhere busy. Vanilla logs it too; you never saw it because it only went
+  to `AppData\LocalLow\Baikun\SpiritVale\Player.log`, where it still goes. The bundled download ships
+  `BepInEx/config/BepInEx.cfg` with `UnityLogListening = false` so it stays out of the console, where
+  every line costs a synchronous write and therefore frames. If you brought your own BepInEx, set that
+  one line yourself. ValeLoot's own log lines are unaffected either way.
 
 ## When a game update breaks it
 
