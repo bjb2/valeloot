@@ -6,7 +6,7 @@ when a matching item is picked up.
 
 It is complete on its own. No companion app, no server, no account, nothing to sign up for.
 
-> ### ⬇ [Download ValeLoot 0.2.1](https://github.com/bjb2/valeloot/releases/download/v0.1.0/ValeLoot-0.1.0-with-BepInEx.zip](https://github.com/bjb2/valeloot/releases/download/v0.2.1/ValeLoot-0.2.1-with-BepInEx.zip)
+> ### ⬇ [Download ValeLoot 0.2.1](https://github.com/bjb2/valeloot/releases/download/v0.1.0/ValeLoot-0.1.0-with-BepInEx.zip](https://github.com/bjb2/valeloot/releases/download/v0.2.1/ValeLoot-0.2.1-with-BepInEx.zip )
 >
 > Unzip it into your SpiritVale folder, launch the game, press **F8**.
 >
