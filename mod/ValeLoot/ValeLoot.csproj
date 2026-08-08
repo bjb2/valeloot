@@ -25,7 +25,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
+    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.785" IncludeAssets="compile" />
   </ItemGroup>
 
   <!--
@@ -128,7 +128,8 @@
       <BundleStageDir>$(MSBuildProjectDirectory)/dist/bundle-stage</BundleStageDir>
       <BundlePluginDir>$(BundleStageDir)/BepInEx/plugins/ValeLoot</BundlePluginDir>
       <BundleZipPath>$(MSBuildProjectDirectory)/dist/ValeLoot-$(Version)-with-BepInEx.zip</BundleZipPath>
-      <BepInExZip>$(MSBuildProjectDirectory)/../../tools/BepInEx-IL2CPP-be785.zip</BepInExZip>
+      <BepInExZip Condition="'$(BepInExZip)' == ''">$(MSBuildProjectDirectory)/../../tools/BepInEx-IL2CPP-be785.zip</BepInExZip>
+      <BepInExSha256>2A7CBF74D26ABE4765C3E662DB1721B923BAC39849EBFEF2CA5DC7DE7E2D9B7F</BepInExSha256>
     </PropertyGroup>
     <!--
       A missing BepInEx archive FAILS rather than quietly producing a "bundle" with no BepInEx in it.
@@ -137,6 +138,11 @@
     -->
     <Error Condition="!Exists('$(BepInExZip)')"
            Text="PackageBundle needs the BepInEx IL2CPP archive at $(BepInExZip). Download the bleeding-edge win-x64 IL2CPP build (be.785, the version named in thirdparty/NOTICE.txt) and put it there, or run -t:Package for the plugin-only zip." />
+    <GetFileHash Files="$(BepInExZip)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_BepInExZipHash" />
+    </GetFileHash>
+    <Error Condition="'%(_BepInExZipHash.FileHash)' != '$(BepInExSha256)'"
+           Text="PackageBundle refuses BepInEx archive %(_BepInExZipHash.Identity): SHA-256 %(_BepInExZipHash.FileHash) does not match pinned build be.785 ($(BepInExSha256)). Download the exact win-x64 IL2CPP artifact named in thirdparty/NOTICE.txt." />
     <RemoveDir Directories="$(BundleStageDir)" />
     <MakeDir Directories="$(BundleStageDir)" />
     <!-- Unmodified, exactly as published: extracted, never rewritten. -->
