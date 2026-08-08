@@ -34,13 +34,14 @@ WHAT IT DOES
 WHAT IT DOES NOT DO
 -------------------
 
-* No automation of any kind. It does not pick up, sell, refine, salvage or move anything.
-* No game RPCs. It sends the game nothing.
-* No input simulation. It does not click, type or move for you.
-* No packet capture, and no game traffic. ValeLoot hooks nothing on the game's network path. It cannot
-  see a game packet, and there is no code path by which it could.
-* Nothing leaves your machine. No telemetry, no upload, no account, no phoning home. There is not one
-  outbound request anywhere in the mod.
+* No gameplay automation. ValeLoot does not pick up, sell, salvage, refine, move, equip or use items.
+* No input simulation. It does not click, type, aim or move for you. It only reads the configured
+  editor hotkey.
+* No gameplay commands. It sends no RPCs or packets and invokes no item-action commands. It only reads
+  local inventory/configuration data and modifies local UI and audio.
+* No packet capture. It does not hook, inspect or decode the game's network traffic.
+* No outbound communication. ValeLoot has no telemetry, uploads, accounts, update service or phoning
+  home. Its editor communicates only over 127.0.0.1 between the game and your browser.
 * ValeLoot DOES open one port on 127.0.0.1, to show you that editor. That is the whole of the next
   section, because a mod you installed on a friend's word should be the thing that tells you.
 
@@ -65,14 +66,14 @@ the whole truth about it, in one place, because it is the thing you would most w
 * It listens on 127.0.0.1:38512 and nothing else. Not 0.0.0.0, not your LAN address, not your Wi-Fi.
   127.0.0.1 is your own machine talking to itself; a request from anywhere else cannot arrive, and one
   that tries is refused before it is read.
-* It serves four things: ValeLoot's editor page (which is compiled into the DLL, not a file on disk),
-  a snapshot of YOUR rules, YOUR bag and the game's item list, a save endpoint that writes YOUR rule
-  file, and a one-word health check so the page can tell it is being served.
+* It serves five routes: ValeLoot's embedded editor page, a state snapshot of YOUR rules, YOUR bag and
+  the game's item list, a save endpoint that writes YOUR rule file, a sound preview for your own .wav
+  files, and a health check so the page can verify that the mod is serving it.
 * It carries no game traffic. It is not attached to the game's connection in any way, sees no game
   packet, and contains no packet capture. That distinction is the point: it is a local web page for a
   text file, not a window onto the game's network.
-* Nothing leaves your machine. The mod makes no outbound request of any kind - not to check for
-  updates, not to report an error, not to anywhere. Play with your network cable out; nothing changes.
+* There is no outbound communication. Every editor request stays on 127.0.0.1 between the game and
+  your browser. The mod does not check for updates, report errors or contact an external service.
 * You can turn it off with one line. In BepInEx/config/com.savi.valeloot.cfg:
 
       [Editor]

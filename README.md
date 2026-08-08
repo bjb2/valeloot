@@ -57,12 +57,14 @@ developer's stance* below.
 
 ## What it does NOT do
 
-- No automation of any kind. It does not pick up, sell, refine, salvage, move or equip anything.
-- No input simulation. It does not click, type, aim or move for you.
-- No game commands. It sends the game nothing at all.
-- No packet capture. It does not hook, read or touch the game's network traffic, and there is no code path
-  by which it could.
-- Nothing leaves your machine. No telemetry, no uploads, no account, no phoning home.
+- **No gameplay automation.** ValeLoot does not pick up, sell, salvage, refine, move, equip or use items.
+- **No input simulation.** It does not click, type, aim or move for you. It only reads the configured
+  editor hotkey.
+- **No gameplay commands.** It sends no RPCs or packets and invokes no item-action commands. It only
+  reads local inventory/configuration data and modifies local UI and audio.
+- **No packet capture.** It does not hook, inspect or decode the game's network traffic.
+- **No outbound communication.** ValeLoot has no telemetry, uploads, accounts, update service or phoning
+  home. Its editor communicates only over `127.0.0.1` between the game and your browser.
 
 That is a **scope boundary with a reason**, not a list of unfinished features. The game's staff have said
 client-side tools that change how loot looks are allowed and nothing beyond that is — so the rule language
@@ -202,9 +204,10 @@ Saving writes `valeloot-filter.txt` and your bag recolours on the next inventory
 The editor is served from the mod over loopback, on `http://127.0.0.1:38512/`.
 
 - It binds **`127.0.0.1` only**. It is reachable from this machine and from nothing else.
-- It serves exactly three things: its own editor page, your own rule file, and the bag/catalog data the
-  page draws. It carries **no game traffic**, and there is no network hook anywhere in the plugin.
-- Nothing leaves your machine.
+- It serves five routes: its embedded editor page, a state snapshot of your rules/bag/catalog, a filter
+  save endpoint, a sound preview for your own `.wav` files, and a health check.
+- It carries **no game traffic**, and there is no network hook anywhere in the plugin.
+- Every request stays on `127.0.0.1` between the game and your browser. There is no outbound communication.
 - Turn it off with `Enabled = false` under `[Editor]` in `BepInEx/config/com.savi.valeloot.cfg`. No port is
   opened, and `F8` then opens a local copy of the editor as a plain file instead. Everything else keeps
   working; the editor is a convenience, and highlighting is the product.
