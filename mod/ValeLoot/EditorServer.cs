@@ -1225,6 +1225,7 @@ internal static class EditorServer
             BagSnapshot.PublishToEditor();
             PublishCatalogIfChanged();
             InventoryWatch.Tick(playerSave);
+            BagFillIndicator.Tick(playerSave);
 
             if (_getKeyDown is not null && _hotkeyCode >= 0 && _getKeyDown(_hotkeyCode, IntPtr.Zero) != 0)
             {

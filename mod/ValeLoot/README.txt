@@ -18,6 +18,8 @@ WHAT IT DOES
   (clearly lit), glow (unmistakable). The colour is whatever #rrggbb you wrote.
 * Names the rule on hover. The item tooltip gains one line, in that rule's colour, saying which of
   your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
+* Tints the HUD bag button yellow above 60% carried weight and red above 80%. Below 60%, it keeps
+  the game's normal colour.
 * Plays a sound when you pick a match up - bag open or closed, once per pickup, never on a repaint.
   Every bag: gear, artifacts, cards, gems, consumables and junk.
 * Reloads while the game is running. Save the filter file and the next time the inventory redraws it
@@ -478,14 +480,20 @@ BepInEx/config/com.savi.valeloot.cfg, written on first run with every option doc
                                    touch this if cells stop colouring after a game update.
   [Highlight] HoverNote   true     The tooltip line naming the rule that claimed the item.
   [Sound]     Enabled     true     Sounds on picking up a match.
+  [Bag Indicator] Enabled          true     Tint the HUD inventory button yellow or red as carried
+                                            weight rises.
+  [Bag Indicator] YellowPercent      60     Percentage above which the button turns yellow (1-98).
+  [Bag Indicator] RedPercent         80     Percentage above which the button turns red; must exceed
+                                            YellowPercent (2-99).
+  [Bag Indicator] TintStrength      0.85    Yellow/red warning-tint strength (0.10-1.00).
   [Editor]    Enabled     true     The editor server. false opens no port at all - see THE ONE PORT
                                    IT OPENS above.
   [Editor]    Port       38512     The loopback port. Change it if something else has that one.
   [Editor]    Hotkey       F8      Any Unity KeyCode name - F8, F9, Insert, Backslash, Home.
 
 Every one of these exists so that a piece which breaks on a game build newer than the mod can be
-turned off without waiting for a release. A cell tint that lands on the wrong object is worse than no
-tint, and a port you did not want is worse than no editor.
+turned off without waiting for a release. A marker that lands on the wrong object is worse than no
+marker, and a port you did not want is worse than no editor.
 
 
 UNINSTALL

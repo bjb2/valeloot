@@ -82,6 +82,14 @@ internal static class HookCensus
         // shut. A rename here is silence, so it is counted rather than discovered.
         new("CharacterData", "", "CharacterData", null),
         new("InventoryData", "", "InventoryData", null),
+        // The HUD bag-fullness warning: the game-owned weight formula and the inventory button it
+        // tints. All are resolved lazily again by BagFillIndicator; census makes a rename visible
+        // in the startup log before the first live character exists.
+        new("BaseUnitController", "", "BaseUnitController", null),
+        new("PlayerController", "", "PlayerController", null),
+        new("StatusComponent", "", "StatusComponent", null),
+        new("UIManager", "", "UIManager", null),
+        new("UIGame", "", "UIGame", null),
     };
 
     public sealed record Result(string Name, bool Ok, string? Detail);

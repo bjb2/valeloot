@@ -60,6 +60,10 @@ public sealed class Plugin : BasePlugin
     private ConfigEntry<bool>? _editor;
     private ConfigEntry<int>? _editorPort;
     private ConfigEntry<string>? _editorHotkey;
+    private ConfigEntry<bool>? _bagIndicator;
+    private ConfigEntry<int>? _bagYellowPercent;
+    private ConfigEntry<int>? _bagRedPercent;
+    private ConfigEntry<float>? _bagTintStrength;
 
     public override void Load()
     {
@@ -68,11 +72,11 @@ public sealed class Plugin : BasePlugin
                      + "use at your own risk — you are responsible for your own account.");
 
         /**
-         * Tuning, in `BepInEx/config/com.savi.valeloot.cfg`. The four highlight/sound entries exist
-         * because a player on a game build newer than this mod needs a way to turn a broken piece off
-         * without waiting for a release — a cell tint that lands on the wrong object is worse than no
-         * tint. The three `[Editor]` entries exist because a listener nobody can switch off is not
-         * something to install on someone else's machine.
+         * Tuning, in `BepInEx/config/com.savi.valeloot.cfg`. Every presentation feature has its own
+         * switch because a player on a game build newer than this mod needs a way to turn a broken
+         * piece off without waiting for a release — a marker that lands on the wrong object is worse
+         * than no marker. The three `[Editor]` entries exist because a listener nobody can switch off
+         * is not something to install on someone else's machine.
          */
         _tint = Config.Bind("Highlight", "TintCell", true,
             "Colour the inventory cell itself. Off leaves the game's own plain highlight, and the hover note still works.");
@@ -82,6 +86,14 @@ public sealed class Plugin : BasePlugin
             "Add a line to the item tooltip naming the rule that claimed the item.");
         _sound = Config.Bind("Sound", "Enabled", true,
             "Play a sound when you pick up an item matching a rule with a `Sound` line — bag open or closed.");
+        _bagIndicator = Config.Bind("Bag Indicator", "Enabled", true,
+            "Tint the HUD inventory button yellow above the first threshold and red above the second.");
+        _bagYellowPercent = Config.Bind("Bag Indicator", "YellowPercent", 60,
+            "Turn the inventory button yellow above this carried-weight percentage (1-98).");
+        _bagRedPercent = Config.Bind("Bag Indicator", "RedPercent", 80,
+            "Turn the inventory button red above this carried-weight percentage; must exceed YellowPercent (2-99).");
+        _bagTintStrength = Config.Bind("Bag Indicator", "TintStrength", 0.85f,
+            "Strength of the yellow or red warning tint (0.10-1.00).");
         _editor = Config.Bind("Editor", "Enabled", true,
             "Serve the rule editor to your browser on 127.0.0.1. It is reachable only from this machine, "
           + "carries no game traffic and sends nothing anywhere. False opens no port at all; the hotkey "
@@ -194,6 +206,18 @@ public sealed class Plugin : BasePlugin
         Log.LogInfo(InventoryWatch.Status());
 
         /**
+         * The always-visible bag fullness warning. It reads the same weight and limit helpers as the
+         * game's inventory panel and rides the existing main-thread tick; losing it costs only the
+         * warning. It tints only the button's existing Graphics rather than creating Unity objects.
+         */
+        if (!BagFillIndicator.Install(_bagIndicator.Value, _bagYellowPercent.Value, _bagRedPercent.Value,
+                                      _bagTintStrength.Value, m => Log.LogInfo(m)) && _bagIndicator.Value)
+        {
+            Log.LogWarning("bag fill indicator did not install; the HUD inventory button will be unchanged.");
+        }
+        Log.LogInfo(BagFillIndicator.Status());
+
+        /**
          * The editor, and the only socket in this plugin.
          *
          * LAST on purpose, and after the paint hooks rather than before them. It is the piece a player
@@ -215,6 +239,7 @@ public sealed class Plugin : BasePlugin
         // The editor first: it owns a background thread and a port, and both have to be gone before
         // anything it reads is torn down under it.
         EditorServer.Uninstall();
+        BagFillIndicator.Uninstall();
         TooltipInject.Uninstall();
         InventoryPaint.Uninstall();
         InventoryWatch.Uninstall();

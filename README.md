@@ -47,6 +47,8 @@ developer's stance* below.
   (clearly lit), `glow` (unmistakable, and it animates). The colour is whatever `#rrggbb` you wrote.
 - **Names the rule on hover.** The item tooltip gains one line, in that rule's colour, saying which of
   your rules claimed the item. Your rule's own name is the explanation, because you wrote it.
+- **Tints the HUD bag button yellow above 60% carried weight and red above 80%.** Below 60%, it keeps
+  the game's normal colour.
 - **Plays a sound when a matching item is picked up** — bag open or closed, once per pickup. Every bag:
   gear, artifacts, cards, gems, consumables and junk. See *Good to know*.
 - **Reloads while you play.** Save your rules and the bag recolours on the next inventory redraw. No
@@ -218,6 +220,10 @@ The editor is served from the mod over loopback, on `http://127.0.0.1:38512/`.
 | `Highlight / TintDepth` | `2` | How deep to colour. Only change this if cells stop colouring after a game update. |
 | `Highlight / HoverNote` | `true` | The tooltip line naming the matched rule. |
 | `Sound / Enabled` | `true` | Sounds on pickup. |
+| `Bag Indicator / Enabled` | `true` | Tint the HUD inventory button yellow or red as carried weight rises. |
+| `Bag Indicator / YellowPercent` | `60` | Percentage above which the button turns yellow. |
+| `Bag Indicator / RedPercent` | `80` | Percentage above which the button turns red. |
+| `Bag Indicator / TintStrength` | `0.85` | Yellow/red warning-tint strength, from `0.10` to `1.00`. |
 | `Editor / Enabled` | `true` | The loopback editor server. |
 | `Editor / Port` | `38512` | Its port. |
 | `Editor / Hotkey` | `F8` | Any `UnityEngine.KeyCode` name. |
