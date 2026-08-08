@@ -91,7 +91,15 @@ if (external.length) fail(`the page references something outside itself: ${[...n
  * — the browser script promptly died on `document is not defined`, which is a true statement about
  * bun and says nothing at all about whether the script parses.
  */
-const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]!);
+// These are source-format delimiters, not an HTML sanitizer. Requiring the two literal tags makes a
+// malformed or attribute-bearing tag fail the build instead of approximating browser parsing with a regex.
+const scriptOpen = '<script>';
+const scriptClose = '</script>';
+const scripts = html.split(scriptOpen).slice(1).map((body, index) => {
+  const end = body.indexOf(scriptClose);
+  if (end < 0) fail(`inline script ${index + 1} has no exact ${scriptClose} terminator`);
+  return body.slice(0, end);
+});
 if (scripts.length !== 2) fail(`expected two inline scripts in the emitted page, found ${scripts.length}`);
 for (const [index, code] of scripts.entries()) {
   const temp = join(here, `.editor-check-${index}.js`);
